@@ -1,0 +1,528 @@
+const express = require('express');
+const router = express.Router();
+const { sendNotificationToMultipleDrivers } = require('../services/firebaseService');
+const Driver = require('../models/driver/driver');
+
+console.log('🧪 Test Routes loaded');
+
+/**
+ * @route GET /api/test
+ * @description Simple test to verify routes are working
+ */
+router.get('/', (req, res) => {
+  console.log('🧪 Test route accessed!');
+  res.json({
+    success: true,
+    message: 'Test routes are working!',
+    timestamp: new Date().toISOString(),
+    availableRoutes: [
+      'GET /api/test',
+      'GET /api/test/routes',
+      'GET /api/test/check-driver',
+      'GET /api/test/check-driver-token/:driverId',
+      'GET /api/test/debug-driver-token',
+      'GET /api/test/drivers',
+      'POST /api/test/send-notification',
+      'POST /api/test/send-to-specific-driver',
+      'GET /api/test/firebase-status',
+      'GET /api/test/check-service-account'
+    ]
+  });
+});
+
+/**
+ * @route GET /api/test/routes
+ * @description List all available routes
+ */
+router.get('/routes', (req, res) => {
+  const app = req.app;
+  const routes = [];
+  
+  app._router.stack.forEach((middleware) => {
+    if (middleware.route) {
+      // Routes
+      const methods = Object.keys(middleware.route.methods)
+        .filter(method => method !== '_all')
+        .map(method => method.toUpperCase());
+      
+      routes.push({
+        path: middleware.route.path,
+        methods: methods
+      });
+    }
+  });
+  
+  console.log('📋 Available routes requested');
+  res.json({
+    success: true,
+    totalRoutes: routes.length,
+    routes: routes
+  });
+});
+
+/**
+ * @route GET /api/test/check-driver
+ * @description Check driver without ID parameter
+ */
+router.get('/check-driver', async (req, res) => {
+  try {
+    console.log('🔍 Checking driver dri123...');
+    
+    const driver = await Driver.findOne({ driverId: 'dri123' });
+    
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        message: 'Driver dri123 not found'
+      });
+    }
+    
+    console.log(`✅ Driver found: ${driver.driverId}`);
+    console.log(`📱 FCM Token: ${driver.fcmToken ? 'EXISTS' : 'NULL'}`);
+    console.log(`📊 Status: ${driver.status}`);
+    
+    res.json({
+      success: true,
+      driverId: driver.driverId,
+      name: driver.name,
+      hasFCMToken: !!driver.fcmToken,
+      fcmToken: driver.fcmToken ? `${driver.fcmToken.substring(0, 20)}...` : 'NULL',
+      fcmTokenFull: driver.fcmToken || 'NULL', // For debugging
+      status: driver.status,
+      lastUpdate: driver.lastUpdate,
+      location: driver.location,
+      platform: driver.platform,
+      notificationEnabled: driver.notificationEnabled,
+      fullDocument: driver // For debugging
+    });
+    
+  } catch (error) {
+    console.error('❌ Error checking driver:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @route GET /api/test/check-driver-token/:driverId
+ * @description Check specific driver's FCM token
+ */
+router.get('/check-driver-token/:driverId', async (req, res) => {
+  try {
+    const { driverId } = req.params;
+    
+    console.log(`🔍 Checking token for driver: ${driverId}`);
+    
+    const driver = await Driver.findOne({ driverId });
+    
+    if (!driver) {
+      console.log(`❌ Driver not found: ${driverId}`);
+      return res.status(404).json({
+        success: false,
+        message: 'Driver not found'
+      });
+    }
+    
+    console.log(`✅ Driver found: ${driver.driverId}`);
+    console.log(`📱 FCM Token: ${driver.fcmToken ? 'EXISTS' : 'NULL'}`);
+    console.log(`📊 Status: ${driver.status}`);
+    
+    res.json({
+      success: true,
+      driverId: driver.driverId,
+      name: driver.name,
+      hasFCMToken: !!driver.fcmToken,
+      fcmToken: driver.fcmToken ? `${driver.fcmToken.substring(0, 20)}...` : 'NULL',
+      fcmTokenFull: driver.fcmToken || 'NULL', // For debugging
+      status: driver.status,
+      lastUpdate: driver.lastUpdate,
+      location: driver.location,
+      platform: driver.platform,
+      notificationEnabled: driver.notificationEnabled
+    });
+    
+  } catch (error) {
+    console.error('❌ Error checking driver token:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @route GET /api/test/debug-driver-token
+ * @description Debug driver's FCM token with full details
+ */
+router.get('/debug-driver-token', async (req, res) => {
+  try {
+    console.log('🔍 Debugging driver token...');
+    
+    const driver = await Driver.findOne({ driverId: 'dri123' });
+    
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        message: 'Driver dri123 not found'
+      });
+    }
+    
+    // Calculate token age in hours
+    const tokenAge = driver.fcmToken && driver.lastUpdate ? 
+      Math.floor((Date.now() - new Date(driver.lastUpdate).getTime()) / (1000 * 60 * 60)) : 
+      'N/A';
+    
+    res.json({
+      success: true,
+      driverId: driver.driverId,
+      name: driver.name,
+      fcmToken: driver.fcmToken || 'NULL',
+      fcmTokenLength: driver.fcmToken ? driver.fcmToken.length : 0,
+      fcmTokenPrefix: driver.fcmToken ? driver.fcmToken.substring(0, 10) : 'NULL',
+      fcmTokenSuffix: driver.fcmToken ? driver.fcmToken.slice(-10) : 'NULL',
+      status: driver.status,
+      lastUpdate: driver.lastUpdate,
+      platform: driver.platform,
+      notificationEnabled: driver.notificationEnabled,
+      tokenAge: tokenAge,
+      tokenAgeHours: tokenAge,
+      lastUpdateFormatted: driver.lastUpdate ? new Date(driver.lastUpdate).toLocaleString() : 'N/A'
+    });
+    
+  } catch (error) {
+    console.error('❌ Error debugging driver token:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @route GET /api/test/drivers
+ * @description Get all drivers with FCM tokens
+ */
+router.get('/drivers', async (req, res) => {
+  try {
+    console.log('📋 Getting all drivers...');
+    
+    const drivers = await Driver.find({})
+      .select('driverId name fcmToken status platform notificationEnabled lastUpdate')
+      .sort({ lastUpdate: -1 });
+
+    const driversWithTokens = drivers.filter(d => d.fcmToken);
+    const onlineDrivers = drivers.filter(d => d.status === 'Live');
+    
+    console.log(`📊 Total drivers: ${drivers.length}`);
+    console.log(`📱 Drivers with tokens: ${driversWithTokens.length}`);
+    console.log(`🟢 Online drivers: ${onlineDrivers.length}`);
+    
+    res.json({
+      success: true,
+      totalDrivers: drivers.length,
+      driversWithTokens: driversWithTokens.length,
+      onlineDrivers: onlineDrivers.length,
+      drivers: drivers.map(driver => ({
+        driverId: driver.driverId,
+        name: driver.name,
+        status: driver.status,
+        hasFCMToken: !!driver.fcmToken,
+        tokenPreview: driver.fcmToken ? `***${driver.fcmToken.slice(-8)}` : 'No token',
+        platform: driver.platform,
+        notificationEnabled: driver.notificationEnabled,
+        lastUpdate: driver.lastUpdate
+      }))
+    });
+
+  } catch (error) {
+    console.error('❌ Error getting drivers:', error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get drivers",
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @route POST /api/test/send-notification
+ * @description Send test notification to all drivers (Thunder Client)
+ */
+router.post('/send-notification', async (req, res) => {
+  try {
+    const { 
+      driverId, 
+      title = "🚖 Test Ride Request", 
+      body = "Test notification from Thunder Client",
+      pickup = "Test Location, Erode",
+      drop = "Test Destination, Erode",
+      fare = 100,
+      distance = "5 km"
+    } = req.body;
+
+    console.log('🧪 Thunder Client Test Notification Request:', req.body);
+
+    // Get driver FCM tokens
+    let driverTokens = [];
+    
+    if (driverId) {
+      // Send to specific driver
+      const driver = await Driver.findOne({ driverId });
+      if (driver && driver.fcmToken) {
+        driverTokens = [driver.fcmToken];
+        console.log(`✅ Found driver: ${driverId}, Token: ${driver.fcmToken.substring(0, 20)}...`);
+      } else {
+        console.log(`❌ Driver ${driverId} not found or no FCM token`);
+      }
+    } else {
+      // Send to all drivers
+      const allDrivers = await Driver.find({ 
+        fcmToken: { $exists: true, $ne: null } 
+      });
+      driverTokens = allDrivers.map(driver => driver.fcmToken).filter(token => token);
+      console.log(`📱 Sending to all ${driverTokens.length} drivers`);
+    }
+
+    if (driverTokens.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No drivers with FCM tokens found"
+      });
+    }
+
+    // Test notification data
+    const testData = {
+      type: "ride_request",
+      rideId: "TEST_" + Date.now(),
+      pickup: JSON.stringify({
+        address: pickup,
+        lat: 11.3410,
+        lng: 77.7172
+      }),
+      drop: JSON.stringify({
+        address: drop,
+        lat: 11.3510,
+        lng: 77.7272
+      }),
+      fare: fare.toString(),
+      distance: distance,
+      vehicleType: "taxi",
+      userName: "Test Customer",
+      userMobile: "9876543210",
+      timestamp: new Date().toISOString(),
+      priority: "high",
+      click_action: "FLUTTER_NOTIFICATION_CLICK",
+      test: "true"
+    };
+
+    console.log('📤 Sending test notification with data:', testData);
+
+    // Send notification
+    const result = await sendNotificationToMultipleDrivers(
+      driverTokens,
+      title,
+      body,
+      testData
+    );
+
+    console.log('📊 Test Notification Result:', result);
+
+    res.json({
+      success: true,
+      message: `Test notification sent: ${result.successCount} success, ${result.failureCount} failed`,
+      result: result,
+      sentTo: driverTokens.length,
+      data: testData
+    });
+
+  } catch (error) {
+    console.error('❌ Error in test notification:', error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to send test notification",
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @route POST /api/test/send-to-specific-driver
+ * @description Send to specific driver by driverId
+ */
+router.post('/send-to-specific-driver', async (req, res) => {
+  try {
+    const { driverId } = req.body;
+
+    if (!driverId) {
+      return res.status(400).json({
+        success: false,
+        message: "driverId is required"
+      });
+    }
+
+    console.log(`🧪 Sending test notification to driver: ${driverId}`);
+
+    const driver = await Driver.findOne({ driverId });
+    if (!driver || !driver.fcmToken) {
+      return res.status(404).json({
+        success: false,
+        message: `Driver ${driverId} not found or no FCM token`
+      });
+    }
+
+    const testData = {
+      type: "ride_request",
+      rideId: "TEST_" + Date.now(),
+      pickup: JSON.stringify({
+        address: "Thunder Client Test Location",
+        lat: 11.3410,
+        lng: 77.7172
+      }),
+      drop: JSON.stringify({
+        address: "Thunder Client Test Destination", 
+        lat: 11.3510,
+        lng: 77.7272
+      }),
+      fare: "150",
+      distance: "7 km",
+      vehicleType: "taxi",
+      userName: "Thunder Client User",
+      userMobile: "9876543210",
+      timestamp: new Date().toISOString(),
+      priority: "high",
+      click_action: "FLUTTER_NOTIFICATION_CLICK",
+      test: "true",
+      source: "thunder_client"
+    };
+
+    const result = await sendNotificationToMultipleDrivers(
+      [driver.fcmToken],
+      "🚖 Thunder Client Test Ride",
+      "This is a test notification from Thunder Client API",
+      testData
+    );
+
+    res.json({
+      success: true,
+      message: `Test notification sent to driver ${driverId}`,
+      driverId: driverId,
+      driverName: driver.name,
+      tokenPreview: driver.fcmToken.substring(0, 20) + '...',
+      result: result,
+      data: testData
+    });
+
+  } catch (error) {
+    console.error('❌ Error sending to specific driver:', error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to send test notification",
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @route GET /api/test/check-service-account
+ * @description Check service account file
+ */
+router.get('/check-service-account', (req, res) => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    
+    const serviceAccountPath = path.join(__dirname, '../service-account-key.json');
+    const fileExists = fs.existsSync(serviceAccountPath);
+    
+    let fileInfo = {};
+    if (fileExists) {
+      const serviceAccount = require(serviceAccountPath);
+      fileInfo = {
+        exists: true,
+        project_id: serviceAccount.project_id,
+        client_email: serviceAccount.client_email,
+        private_key_length: serviceAccount.private_key ? serviceAccount.private_key.length : 0,
+        file_size: fs.statSync(serviceAccountPath).size + ' bytes',
+        path: serviceAccountPath
+      };
+    } else {
+      fileInfo = { 
+        exists: false,
+        path: serviceAccountPath
+      };
+    }
+    
+    res.json({
+      success: true,
+      serviceAccount: fileInfo
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @route GET /api/test/firebase-status
+ * @description Check Firebase Admin SDK status
+ */
+router.get('/firebase-status', async (req, res) => {
+  try {
+    const admin = require('firebase-admin');
+    
+    let status = {
+      initialized: false,
+      apps: [],
+      error: null
+    };
+
+    try {
+      // Check if Firebase is initialized
+      const apps = admin.apps;
+      status.apps = apps ? apps.map(app => app?.name || 'unknown') : [];
+      status.initialized = apps && apps.length > 0;
+      
+      if (status.initialized) {
+        // Test Firebase functionality
+        const app = admin.app();
+        status.appName = app.name;
+        status.projectId = app.options?.credential?.projectId || 'Unknown';
+        
+        res.json({
+          success: true,
+          message: '✅ Firebase Admin is working correctly',
+          status: status
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          message: '❌ Firebase Admin is NOT initialized',
+          status: status
+        });
+      }
+    } catch (firebaseError) {
+      status.error = firebaseError.message;
+      res.status(500).json({
+        success: false,
+        message: '❌ Firebase Admin initialization failed',
+        status: status,
+        error: firebaseError.message
+      });
+    }
+
+  } catch (error) {
+    console.error('❌ Error checking Firebase status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to check Firebase status',
+      error: error.message
+    });
+  }
+});
+
+module.exports = router;
