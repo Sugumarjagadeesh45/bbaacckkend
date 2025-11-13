@@ -15,14 +15,21 @@ const activeDriverSockets = new Map();
 const processingRides = new Set();
 const userLocationTracking = new Map();
 
-// In the sendRideRequestToAllDrivers function, add this fallback:
+
+
+// In socket.js - Replace the current return statement in sendRideRequestToAllDrivers
 const sendRideRequestToAllDrivers = async (rideData, savedRide) => {
   try {
     console.log('📢 Sending FCM notifications to ALL drivers...');
 
-    // Get all drivers (including those without FCM tokens)
-    const allDrivers = await Driver.find({ status: "Live" });
+    // Get ALL active drivers with FCM tokens
+    const allDrivers = await Driver.find({ 
+      status: "Live",
+      fcmToken: { $exists: true, $ne: null, $ne: '' }
+    });
+    
     console.log(`📊 Total online drivers: ${allDrivers.length}`);
+    console.log(`📱 Drivers with FCM tokens: ${allDrivers.filter(d => d.fcmToken).length}`);
 
     // Always send socket notification as primary method
     console.log('🔔 Sending socket notification to all drivers...');
@@ -33,55 +40,66 @@ const sendRideRequestToAllDrivers = async (rideData, savedRide) => {
       timestamp: new Date().toISOString()
     });
 
-    // FCM is secondary - don't block if it fails
+    // FCM notification to drivers with tokens
     const driversWithFCM = allDrivers.filter(driver => driver.fcmToken);
-    console.log(`📱 Found ${driversWithFCM.length} drivers with FCM tokens`);
-
+    
     if (driversWithFCM.length > 0) {
-      try {
-        const driverTokens = driversWithFCM.map(driver => driver.fcmToken);
-        
-        const notificationData = {
-          type: "ride_request",
-          rideId: rideData.rideId,
-          pickup: JSON.stringify(rideData.pickup || {}),
-          drop: JSON.stringify(rideData.drop || {}),
-          fare: rideData.fare?.toString() || "0",
-          distance: rideData.distance || "0 km",
-          vehicleType: rideData.vehicleType || "taxi",
-          userName: rideData.userName || "Customer",
-          userMobile: rideData.userMobile || "N/A",
-          timestamp: new Date().toISOString(),
-          priority: "high"
-        };
+      console.log(`🎯 Sending FCM to ${driversWithFCM.length} drivers`);
+      
+      const driverTokens = driversWithFCM.map(driver => driver.fcmToken);
+      
+      const notificationData = {
+        type: "ride_request",
+        rideId: rideData.rideId,
+        pickup: JSON.stringify(rideData.pickup || {}),
+        drop: JSON.stringify(rideData.drop || {}),
+        fare: rideData.fare?.toString() || "0",
+        distance: rideData.distance || "0 km",
+        vehicleType: rideData.vehicleType || "taxi",
+        userName: rideData.userName || "Customer",
+        userMobile: rideData.userMobile || "N/A",
+        timestamp: new Date().toISOString(),
+        priority: "high",
+        click_action: "FLUTTER_NOTIFICATION_CLICK"
+      };
 
-        const fcmResult = await sendNotificationToMultipleDrivers(
-          driverTokens,
-          "🚖 New Ride Request!",
-          `Pickup: ${rideData.pickup?.address?.substring(0, 40) || 'Location'}...`,
-          notificationData
-        );
+      const fcmResult = await sendNotificationToMultipleDrivers(
+        driverTokens,
+        "🚖 New Ride Request!",
+        `Pickup: ${rideData.pickup?.address?.substring(0, 40) || 'Location'}... | Fare: ₹${rideData.fare}`,
+        notificationData
+      );
 
-        console.log('📊 FCM Result:', fcmResult);
-        
-      } catch (fcmError) {
-        console.log('⚠️ FCM notification failed, but socket notification sent:', fcmError);
-      }
+      console.log('📊 FCM Notification Result:', fcmResult);
+
+      // ✅ CRITICAL FIX: Return proper FCM status
+      return {
+        success: fcmResult.successCount > 0,
+        driversNotified: fcmResult.successCount,
+        totalDrivers: driversWithFCM.length,
+        fcmSent: fcmResult.successCount > 0,
+        fcmMessage: fcmResult.successCount > 0 ? 
+          `FCM sent to ${fcmResult.successCount} drivers` : 
+          `FCM failed: ${fcmResult.errors?.join(', ') || 'Unknown error'}`
+      };
+    } else {
+      console.log('⚠️ No drivers with FCM tokens found');
+      return {
+        success: false,
+        driversNotified: 0,
+        totalDrivers: 0,
+        fcmSent: false,
+        fcmMessage: "No drivers with FCM tokens available"
+      };
     }
-
-    return {
-      success: true,
-      driverCount: allDrivers.length,
-      fcmCount: driversWithFCM.length,
-      timestamp: new Date().toISOString()
-    };
 
   } catch (error) {
     console.error('❌ Error in notification system:', error);
     return {
       success: false,
       error: error.message,
-      timestamp: new Date().toISOString()
+      fcmSent: false,
+      fcmMessage: `FCM error: ${error.message}`
     };
   }
 };
@@ -648,11 +666,27 @@ const init = (server) => {
 
 
             console.log('🚨 EMERGENCY: Sending real-time notifications');
-    const notificationResult = await sendRideRequestToAllDrivers({
-      ...data,
-      rideId: rideId,
-      fare: finalPrice
-    });
+  
+            // In socket.js bookRide handler - After FCM call
+const notificationResult = await sendRideRequestToAllDrivers({
+  ...data,
+  rideId: rideId,
+  fare: finalPrice
+}, savedRide);
+
+console.log('📱 REAL BOOKING FCM RESULT:', notificationResult);
+
+// ✅ CRITICAL: Include notificationResult in callback
+if (callback) {
+  callback({
+    success: true,
+    rideId: rideId,
+    _id: savedRide._id.toString(),
+    otp: otp,
+    message: "Ride booked successfully!",
+    notificationResult: notificationResult // ✅ THIS MUST BE INCLUDED
+  });
+}
 
     console.log('📊 REAL-TIME NOTIFICATION RESULT:', notificationResult);
 

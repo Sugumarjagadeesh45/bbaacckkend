@@ -13,6 +13,8 @@ const registrationSchema = new mongoose.Schema({
   dob: { type: Date, default: null },
   altMobile: { type: String, default: '' },
   wallet: { type: Number, default: 0 }
+}, {
+  timestamps: true // ✅ ADD THIS to automatically create createdAt and updatedAt
 });
 
 // Pre-save hook to generate customerId if not provided

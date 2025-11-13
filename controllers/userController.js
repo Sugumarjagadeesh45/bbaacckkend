@@ -235,18 +235,39 @@ exports.registerUser = async (req, res) => {
   }
 };
 
-// Get all registered users for admin panel
+
 exports.getAllRegisteredUsers = async (req, res) => {
   try {
-    console.log('📋 Fetching all registered users...');
-    const registeredUsers = await Registration.find().sort({ createdAt: -1 });
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    console.log('📋 Fetching registered users with pagination...');
+    console.log(`📄 Page: ${page}, Limit: ${limit}, Skip: ${skip}`);
+
+    // Get total count for pagination
+    const total = await Registration.countDocuments();
     
-    console.log(`✅ Found ${registeredUsers.length} registered users`);
-    
+    // Get users with pagination, sorted by latest first
+    const registeredUsers = await Registration.find()
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .select('-password'); // Exclude password field
+
+    console.log(`✅ Found ${registeredUsers.length} registered users out of ${total} total`);
+
     res.json({
       success: true,
-      count: registeredUsers.length,
-      data: registeredUsers
+      data: registeredUsers,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(total / limit),
+        totalUsers: total,
+        usersPerPage: limit,
+        hasNextPage: page < Math.ceil(total / limit),
+        hasPrevPage: page > 1
+      }
     });
   } catch (err) {
     console.error("❌ Error fetching registered users:", err.message);
@@ -538,14 +559,90 @@ exports.updateUser = async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
-    const user = await Registration.findByIdAndUpdate(id, updates, { new: true, runValidators: true });
+    
+    console.log('📝 Updating user:', id);
+    console.log('📝 Update data:', updates);
+
+    // Remove fields that shouldn't be updated
+    const allowedUpdates = ['name', 'email', 'address', 'altMobile', 'gender', 'dob', 'wallet'];
+    const filteredUpdates = {};
+    
+    allowedUpdates.forEach(field => {
+      if (updates[field] !== undefined) {
+        filteredUpdates[field] = updates[field];
+      }
+    });
+
+    const user = await Registration.findByIdAndUpdate(
+      id, 
+      filteredUpdates, 
+      { new: true, runValidators: true }
+    );
+    
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ 
+        success: false,
+        error: 'User not found' 
+      });
     }
-    res.json(user);
+
+    console.log('✅ User updated successfully:', user.name);
+    
+    res.json({
+      success: true,
+      message: 'User updated successfully',
+      data: user
+    });
   } catch (err) {
     console.error("❌ Error updating user:", err.message);
-    res.status(400).json({ error: err.message });
+    
+    if (err.name === 'ValidationError') {
+      const errors = Object.values(err.errors).map(error => error.message);
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: errors
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to update user',
+      details: err.message
+    });
+  }
+};
+
+// Delete user
+exports.deleteUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    console.log('🗑️ Deleting user:', id);
+
+    const user = await Registration.findByIdAndDelete(id);
+    
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'User not found' 
+      });
+    }
+
+    console.log('✅ User deleted successfully:', user.name);
+    
+    res.json({
+      success: true,
+      message: 'User deleted successfully',
+      data: { _id: user._id, name: user.name }
+    });
+  } catch (err) {
+    console.error("❌ Error deleting user:", err.message);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to delete user',
+      details: err.message
+    });
   }
 };
 
@@ -602,19 +699,4 @@ exports.saveLiveLocation = async (req, res) => {
 };
 
 
-
-// Delete user (new implementation)
-exports.deleteUser = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const user = await Registration.findByIdAndDelete(id);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    res.json({ message: 'User deleted successfully' });
-  } catch (err) {
-    console.error("❌ Error deleting user:", err.message);
-    res.status(500).json({ error: err.message });
-  }
-};
 

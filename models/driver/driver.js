@@ -17,9 +17,20 @@ const driverSchema = new mongoose.Schema(
     },
 
     // ✅ Firebase Cloud Messaging & Platform details
-    fcmToken: { type: String, default: null },
-    platform: { type: String, enum: ["android", "ios"], default: "android" },
-    notificationEnabled: { type: Boolean, default: true },
+    fcmToken: { type: String, default: null ,  index: true },
+fcmTokenUpdatedAt: { 
+  type: Date, 
+  default: null 
+},
+platform: { 
+  type: String, 
+  enum: ["android", "ios"], 
+  default: "android" 
+},
+notificationEnabled: { 
+  type: Boolean, 
+  default: true 
+},
 
     // ✅ Driver performance and account info
     active: { type: Boolean, default: false },
