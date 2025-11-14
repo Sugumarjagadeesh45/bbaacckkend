@@ -854,41 +854,159 @@ const init = (server) => {
       }
     });
 
+    
 
-    // In your acceptRide function
+    // Replace the existing acceptRide handler with this complete version
 socket.on("acceptRide", async (data, callback) => {
   try {
+    console.log('🚨 ===== DRIVER ACCEPTING RIDE =====');
+    console.log('📦 Raw acceptance data from driver:', JSON.stringify(data, null, 2));
+    
+    // Validate required fields with better error handling
+    if (!data || typeof data !== 'object') {
+      console.error('❌ Invalid data format in acceptRide');
+      if (callback) callback({ success: false, message: "Invalid data format" });
+      return;
+    }
+
     const { rideId, driverId, driverName } = data;
     
-    // Find the ride
+    if (!rideId || !driverId) {
+      console.error('❌ Missing required fields in acceptRide:', { rideId, driverId });
+      if (callback) callback({ success: false, message: "Missing rideId or driverId" });
+      return;
+    }
+
+    console.log(`✅ Driver ${driverName || driverId} accepting ride ${rideId}`);
+    
+    // Find the ride in database
     const ride = await Ride.findOne({ RAID_ID: rideId });
     if (!ride) {
-      return callback({ success: false, message: "Ride not found" });
+      console.error(`❌ Ride ${rideId} not found in database`);
+      if (callback) callback({ success: false, message: "Ride not found" });
+      return;
     }
-    
-    // Get the user ID from the ride
+
+    // Get driver details to fill missing data
+    const driver = await Driver.findOne({ driverId: driverId });
+    if (!driver) {
+      console.error(`❌ Driver ${driverId} not found in database`);
+      if (callback) callback({ success: false, message: "Driver not found" });
+      return;
+    }
+
+    // Get user ID from the ride
     const userId = ride.user.toString();
-    console.log(`📡 Notifying user room: ${userId}`);
+    console.log(`👤 Found user ID from ride: ${userId}`);
+
+    // Get driver's current location from activeDriverSockets
+    let driverLat = data.driverLat;
+    let driverLng = data.driverLng;
     
-    // Check if user is connected
+    if (!driverLat || !driverLng) {
+      // Try to get from active driver sockets
+      if (activeDriverSockets.has(driverId)) {
+        const driverData = activeDriverSockets.get(driverId);
+        driverLat = driverData.location.latitude;
+        driverLng = driverData.location.longitude;
+        console.log(`📍 Got driver location from active sockets: ${driverLat}, ${driverLng}`);
+      } else {
+        // Fallback to driver's last known location from database
+        driverLat = driver.location.coordinates[1];
+        driverLng = driver.location.coordinates[0];
+        console.log(`📍 Got driver location from database: ${driverLat}, ${driverLng}`);
+      }
+    }
+
+    // Prepare COMPLETE acceptance data for user
+    const acceptanceData = {
+      rideId: rideId,
+      driverId: driverId,
+      driverName: driverName || driver.name || "Driver",
+      driverMobile: data.driverMobile || driver.phone || "N/A",
+      driverLat: driverLat,
+      driverLng: driverLng,
+      vehicleType: data.vehicleType || driver.vehicleType || "taxi",
+      timestamp: new Date().toISOString(),
+      _isValid: true,
+      _source: 'driver_app'
+    };
+
+    console.log('📤 Sending COMPLETE ride acceptance to user:', acceptanceData);
+
+    // Send to user's room
     const userSockets = await io.in(userId).fetchSockets();
-    console.log(`🔍 Found ${userSockets.length} sockets in user room: ${userId}`);
+    console.log(`🔍 Found ${userSockets.length} user sockets for userId: ${userId}`);
     
     if (userSockets.length === 0) {
-      console.log(`⚠️ User ${userId} is not connected to socket`);
-      // Implement fallback notification method (SMS, etc.)
+      console.log(`⚠️ User ${userId} is not currently connected`);
+      // Store acceptance for when user reconnects
+      rides[rideId] = { ...rides[rideId], ...acceptanceData, status: "accepted" };
     }
+
+    // Send acceptance notification to user - MULTIPLE METHODS FOR REDUNDANCY
+    console.log('📡 Sending ride acceptance via multiple channels...');
     
-    // Send notification
-    const driverData = { /* ... */ };
-    io.to(userId).emit("rideAccepted", driverData);
+    // Method 1: Direct to user room
+    io.to(userId).emit("rideAccepted", acceptanceData);
     
-    // ... rest of the function
+    // Method 2: Broadcast to user
+    socket.broadcast.to(userId).emit("rideAccepted", acceptanceData);
+    
+    // Method 3: Global emit (for debugging)
+    io.emit("rideAcceptedBroadcast", {
+      ...acceptanceData,
+      targetUserId: userId,
+      broadcast: true
+    });
+
+    // Method 4: Specific event for the user
+    io.to(userId).emit("rideAcceptedWithDetails", acceptanceData);
+    
+    console.log('✅ Ride acceptance sent via all channels');
+
+    // Update ride status in database
+    ride.status = "accepted";
+    ride.driverId = driverId;
+    await ride.save();
+    
+    console.log(`✅ Ride ${rideId} accepted by driver ${driverId}`);
+    console.log('📤 Final acceptance data sent:', acceptanceData);
+
+    if (callback) {
+      callback({ 
+        success: true, 
+        message: "Ride accepted successfully",
+        acceptanceData: acceptanceData
+      });
+    }
+
   } catch (error) {
-    console.error("❌ Error accepting ride:", error);
-    callback({ success: false, message: "Server error" });
+    console.error("❌ Error in acceptRide:", error);
+    if (callback) {
+      callback({ success: false, message: "Server error: " + error.message });
+    }
   }
 });
+
+
+
+// Add this in socket.js connection section
+socket.onAny((eventName, data) => {
+  if (eventName.includes('ride') || eventName.includes('accept') || eventName.includes('driver')) {
+    console.log(`🔍 [SOCKET EVENT] ${eventName}:`, JSON.stringify(data, null, 2));
+  }
+});
+
+// Specific debug for rideAccepted events
+socket.on("rideAccepted", (data) => {
+  console.log('🎯 [DIRECT rideAccepted EVENT]:', JSON.stringify(data, null, 2));
+});
+
+socket.on("rideAcceptedBroadcast", (data) => {
+  console.log('📡 [BROADCAST rideAccepted EVENT]:', JSON.stringify(data, null, 2));
+});
+
 
     // USER LOCATION UPDATE
     socket.on("userLocationUpdate", async (data) => {

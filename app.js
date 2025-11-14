@@ -32,6 +32,62 @@ try {
 }
 app.use("/uploads", express.static(uploadsDir));
 
+
+
+// Add this route to app.js before the error handler
+app.post('/api/test/accept-ride', async (req, res) => {
+  try {
+    const { rideId, driverId, driverName } = req.body;
+    
+    console.log('🧪 TEST: Manual ride acceptance');
+    console.log('📦 Test data:', { rideId, driverId, driverName });
+    
+    const io = req.app.get('io');
+    if (!io) {
+      return res.status(500).json({ error: 'Socket.io not available' });
+    }
+
+    // Find the actual ride to get user ID
+    const Ride = require('./models/ride');
+    const ride = await Ride.findOne({ RAID_ID: rideId });
+    if (!ride) {
+      return res.status(404).json({ error: 'Ride not found' });
+    }
+
+    const userId = ride.user.toString();
+    console.log(`🧪 Sending test acceptance to user: ${userId}`);
+    
+    // Create complete test data
+    const testData = {
+      rideId: rideId,
+      driverId: driverId || 'dri123',
+      driverName: driverName || 'Test Driver',
+      driverMobile: '9876543210',
+      driverLat: 11.331288,
+      driverLng: 77.716728,
+      vehicleType: 'taxi',
+      timestamp: new Date().toISOString(),
+      _isTest: true
+    };
+
+    // Send to user
+    io.to(userId).emit("rideAccepted", testData);
+    
+    res.json({ 
+      success: true, 
+      message: 'Test acceptance sent',
+      data: testData,
+      userId: userId
+    });
+    
+  } catch (error) {
+    console.error('❌ Test error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+
 // In your server routes (backend)
 app.post('/drivers/update-fcm-token', async (req, res) => {
   try {
