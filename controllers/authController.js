@@ -1,4 +1,4 @@
-const User = require('../models/User');
+const User = require('../models/user/Registration');
 const jwt = require('jsonwebtoken');
 
 const otpStore = {}; // Temporary in-memory store { phone: { otp, expiresAt } }

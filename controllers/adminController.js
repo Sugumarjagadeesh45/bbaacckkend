@@ -1,7 +1,7 @@
 // controllers/adminController.js
 
 
-const User = require('../models/User');
+const User = require('../models/user/Registration');
 const Driver = require('../models/driver/driver');
 const Ride = require('../models/ride');
 const GroceryItem = require('../models/groceryItem');
