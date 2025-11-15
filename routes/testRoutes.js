@@ -246,6 +246,69 @@ router.get('/drivers', async (req, res) => {
   }
 });
 
+
+
+// In /routes/testRoutes.js - Add this route
+router.post('/create-test-driver', async (req, res) => {
+  try {
+    const Driver = require('../models/driver/driver');
+    const bcrypt = require('bcryptjs');
+    
+    // Check if driver already exists
+    const existingDriver = await Driver.findOne({ driverId: 'dri123' });
+    if (existingDriver) {
+      return res.json({
+        success: true,
+        message: 'Driver already exists',
+        driver: existingDriver
+      });
+    }
+
+    // Create test driver
+    const passwordHash = await bcrypt.hash('password123', 12);
+    
+    const testDriver = new Driver({
+      driverId: 'dri123',
+      name: 'Test Driver',
+      phone: '9876543210',
+      passwordHash: passwordHash,
+      vehicleType: 'taxi',
+      status: 'Live',
+      location: {
+        type: 'Point',
+        coordinates: [77.716728, 11.331288] // [longitude, latitude]
+      },
+      fcmToken: null,
+      platform: 'android',
+      notificationEnabled: true
+    });
+
+    await testDriver.save();
+    
+    console.log('✅ Test driver created successfully:', testDriver);
+    
+    res.json({
+      success: true,
+      message: 'Test driver created successfully',
+      driver: {
+        driverId: testDriver.driverId,
+        name: testDriver.name,
+        status: testDriver.status,
+        location: testDriver.location
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error creating test driver:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+
+
 /**
  * @route POST /api/test/send-notification
  * @description Send test notification to all drivers (Thunder Client)

@@ -87,13 +87,17 @@ app.post('/api/test/accept-ride', async (req, res) => {
 });
 
 
-// In app.js - Update the FCM token endpoint
+
+// In app.js - Replace the existing FCM token endpoint with this
 app.post('/drivers/update-fcm-token', async (req, res) => {
   try {
     const { driverId, fcmToken, platform } = req.body;
     
-    console.log('📱 Updating FCM token for driver:', driverId);
-    console.log('🔑 Token received:', fcmToken ? `${fcmToken.substring(0, 20)}...` : 'NULL');
+    console.log('📱 FCM Token Update Request:', { 
+      driverId, 
+      tokenLength: fcmToken?.length,
+      platform 
+    });
 
     if (!driverId || !fcmToken) {
       return res.status(400).json({
@@ -102,35 +106,39 @@ app.post('/drivers/update-fcm-token', async (req, res) => {
       });
     }
 
-    // ✅ IMPORT Driver model properly
+    // ✅ IMPORTANT: Use the correct model path
     const Driver = require('./models/driver/driver');
 
-    // Update driver in database using driverId field
-    const driver = await Driver.findOneAndUpdate(
-      { driverId: driverId }, // Match by driverId field
+    // Check if driver exists first
+    const existingDriver = await Driver.findOne({ driverId: driverId });
+    if (!existingDriver) {
+      console.log(`❌ Driver not found: ${driverId}`);
+      return res.status(404).json({
+        success: false,
+        error: 'Driver not found. Please create driver first.'
+      });
+    }
+
+    // Update driver with FCM token
+    const updatedDriver = await Driver.findOneAndUpdate(
+      { driverId: driverId },
       { 
         fcmToken: fcmToken,
         platform: platform || 'android',
         lastUpdate: new Date(),
         notificationEnabled: true,
-        status: "Live" // Keep driver online
+        status: "Live" // Ensure driver is online
       },
-      { new: true, upsert: false }
+      { new: true }
     );
 
-    if (!driver) {
-      return res.status(404).json({
-        success: false,
-        error: 'Driver not found'
-      });
-    }
-
-    console.log('✅ FCM token updated for driver:', driverId);
+    console.log('✅ FCM token updated successfully for driver:', driverId);
     
     res.json({
       success: true,
-      message: 'FCM token updated successfully',
-      driverId: driverId,
+      message: 'FCM token registered successfully',
+      driverId: updatedDriver.driverId,
+      name: updatedDriver.name,
       tokenUpdated: true,
       tokenPreview: `${fcmToken.substring(0, 15)}...`
     });
@@ -143,7 +151,6 @@ app.post('/drivers/update-fcm-token', async (req, res) => {
     });
   }
 });
-
 // Add this temporary endpoint
 app.get('/api/test-driver-status', async (req, res) => {
   try {
