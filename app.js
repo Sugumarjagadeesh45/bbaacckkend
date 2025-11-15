@@ -140,7 +140,7 @@ app.get('/api/test-driver-status', async (req, res) => {
   }
 });
 
-// Backend endpoint to update FCM token
+// In app.js - Update the FCM token endpoint
 app.post('/api/drivers/update-fcm-token', async (req, res) => {
   try {
     const { driverId, fcmToken, platform, appVersion } = req.body;
@@ -156,14 +156,15 @@ app.post('/api/drivers/update-fcm-token', async (req, res) => {
       });
     }
 
-    // Update driver in database
+    // Update driver in database using driverId field
     const driver = await Driver.findOneAndUpdate(
-      { driverId: driverId }, // or { _id: driverId } depending on your schema
+      { driverId: driverId }, // Match by driverId field
       { 
         fcmToken: fcmToken,
-        platform: platform,
-        lastSeen: new Date(),
-        appVersion: appVersion
+        platform: platform || 'android',
+        lastUpdate: new Date(),
+        notificationEnabled: true,
+        status: "Live" // Keep driver online
       },
       { new: true, upsert: false }
     );
@@ -181,6 +182,7 @@ app.post('/api/drivers/update-fcm-token', async (req, res) => {
       success: true,
       message: 'FCM token updated successfully',
       driverId: driverId,
+      tokenUpdated: true,
       tokenPreview: `${fcmToken.substring(0, 15)}...`
     });
 
@@ -192,7 +194,6 @@ app.post('/api/drivers/update-fcm-token', async (req, res) => {
     });
   }
 });
-
 
 /* ---------- Helper: safeRequireRoute ---------- */
 /**

@@ -51,7 +51,7 @@ const loginDriver = async (req, res) => {
     const { driverId, password, latitude, longitude, fcmToken } = req.body;
     console.log(`🔑 Login attempt for driver: ${driverId}`);
 
-    const driver = await Driver.findOne({ driverId });
+    const driver = await Driver.findOne({ driverId: driverId });
     if (!driver) {
       console.log(`❌ Driver not found: ${driverId}`);
       return res.status(404).json({ msg: "Driver not found" });
@@ -167,7 +167,7 @@ const sendTestNotification = async (req, res) => {
   try {
     const { driverId } = req.user;
     
-    const driver = await Driver.findOne({ driverId });
+    const driver = await Driver.findOne({ driverId: driverId });
     if (!driver || !driver.fcmToken) {
       return res.status(404).json({
         success: false,
@@ -212,7 +212,7 @@ const changePassword = async (req, res) => {
   try {
     const { driverId, oldPassword, newPassword } = req.body;
 
-    const driver = await Driver.findOne({ driverId });
+ const driver = await Driver.findOne({ driverId: driverId });
     if (!driver) return res.status(404).json({ msg: "Driver not found" });
 
     const match = await bcrypt.compare(oldPassword, driver.passwordHash);
