@@ -8,6 +8,10 @@ const morgan = require("morgan");
 
 const app = express();
 
+
+const Driver = require('./models/driver/driver');
+
+
 /* ---------- Basic middleware ---------- */
 app.use(morgan("dev"));
 app.use(
@@ -166,6 +170,61 @@ app.post('/drivers/update-fcm-token', async (req, res) => {
 });
 
 
+// In app.js - Replace the existing /register-fcm-token endpoint with this:
+
+app.post('/register-fcm-token', async (req, res) => {
+  try {
+    const { driverId, fcmToken, platform, appVersion } = req.body;
+    
+    console.log('📱 FCM Token Registration Request:', { 
+      driverId, 
+      tokenLength: fcmToken?.length,
+      platform 
+    });
+
+    if (!driverId || !fcmToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'Driver ID and FCM token are required'
+      });
+    }
+
+    // Check if driver exists
+    const driver = await Driver.findOne({ driverId: driverId });
+    if (!driver) {
+      console.log(`❌ Driver not found: ${driverId}`);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Driver not found' 
+      });
+    }
+
+    console.log(`✅ Driver found: ${driver.name}`);
+
+    // Update FCM token
+    driver.fcmToken = fcmToken;
+    driver.platform = platform || 'android';
+    driver.lastUpdate = new Date();
+    driver.notificationEnabled = true;
+    
+    await driver.save();
+    
+    console.log(`✅ FCM token updated for driver: ${driverId}`);
+    
+    res.json({ 
+      success: true,
+      message: 'FCM token registered successfully',
+      driverId: driverId,
+      name: driver.name
+    });
+  } catch (error) {
+    console.error('❌ FCM registration error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
 
 // Add this temporary endpoint
 app.get('/api/test-driver-status', async (req, res) => {
