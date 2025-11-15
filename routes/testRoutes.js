@@ -436,11 +436,7 @@ const checkFirebaseConfig = async () => {
 };
 
 
-
-/**
- * @route POST /api/test/send-notification
- * @description Send test notification to all drivers (Thunder Client)
- */
+// In testRoutes.js - Update the send-notification endpoint
 router.post('/send-notification', async (req, res) => {
   try {
     const { 
@@ -457,12 +453,14 @@ router.post('/send-notification', async (req, res) => {
 
     // Get driver FCM tokens
     let driverTokens = [];
+    let targetDriver = null;
     
     if (driverId) {
       // Send to specific driver
       const driver = await Driver.findOne({ driverId });
       if (driver && driver.fcmToken) {
         driverTokens = [driver.fcmToken];
+        targetDriver = driver;
         console.log(`✅ Found driver: ${driverId}, Token: ${driver.fcmToken.substring(0, 20)}...`);
       } else {
         console.log(`❌ Driver ${driverId} not found or no FCM token`);
@@ -520,12 +518,20 @@ router.post('/send-notification', async (req, res) => {
 
     console.log('📊 Test Notification Result:', result);
 
+    // 🔥 AUTOMATIC CLEANUP: Remove invalid tokens
+    if (targetDriver && result.failureCount > 0) {
+      const invalidToken = targetDriver.fcmToken;
+      console.log(`🧹 Attempting to clean up invalid token for driver: ${targetDriver.driverId}`);
+      await cleanupInvalidFCMTokens(targetDriver.driverId, invalidToken);
+    }
+
     res.json({
       success: true,
       message: `Test notification sent: ${result.successCount} success, ${result.failureCount} failed`,
       result: result,
       sentTo: driverTokens.length,
-      data: testData
+      data: testData,
+      cleanupPerformed: targetDriver ? true : false
     });
 
   } catch (error) {
@@ -537,6 +543,62 @@ router.post('/send-notification', async (req, res) => {
     });
   }
 });
+
+
+
+// Clean up invalid FCM token
+router.post('/cleanup-invalid-token', async (req, res) => {
+  try {
+    const { driverId } = req.body;
+    
+    console.log(`🧹 MANUAL CLEANUP REQUEST FOR DRIVER: ${driverId}`);
+    
+    const driver = await Driver.findOne({ driverId });
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        message: 'Driver not found'
+      });
+    }
+    
+    console.log(`📱 Current FCM token: ${driver.fcmToken ? 'EXISTS' : 'NULL'}`);
+    
+    // Remove the FCM token
+    const result = await Driver.findOneAndUpdate(
+      { driverId: driverId },
+      { 
+        $unset: { fcmToken: 1 },
+        $set: { 
+          notificationEnabled: false,
+          lastUpdate: new Date()
+        }
+      },
+      { new: true }
+    );
+    
+    console.log(`✅ FCM TOKEN CLEANED UP FOR DRIVER: ${driverId}`);
+    
+    res.json({
+      success: true,
+      message: 'Invalid FCM token cleaned up successfully',
+      driver: {
+        driverId: result.driverId,
+        name: result.name,
+        fcmToken: result.fcmToken || 'NULL',
+        notificationEnabled: result.notificationEnabled
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Cleanup error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+
 
 /**
  * @route POST /api/test/send-to-specific-driver

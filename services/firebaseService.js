@@ -34,30 +34,52 @@ const ensureFirebaseInitialized = () => {
   }
 };
 
-// Alternative simplified version in firebaseService.js
 
-// In firebaseService.js - Enhanced sendNotificationToMultipleDrivers
+// In firebaseService.js - Add this function
+const cleanupInvalidFCMTokens = async (driverId, invalidToken) => {
+  try {
+    console.log(`🧹 CLEANING UP INVALID FCM TOKEN FOR DRIVER: ${driverId}`);
+    
+    const Driver = require('../models/driver/driver');
+    
+    const result = await Driver.findOneAndUpdate(
+      { driverId: driverId, fcmToken: invalidToken },
+      { 
+        $unset: { fcmToken: 1 },
+        $set: { 
+          notificationEnabled: false,
+          lastUpdate: new Date()
+        }
+      },
+      { new: true }
+    );
+
+    if (result) {
+      console.log(`✅ INVALID FCM TOKEN REMOVED FOR DRIVER: ${driverId}`);
+      console.log(`🔄 Driver ${driverId} needs to register a new FCM token`);
+    } else {
+      console.log(`⚠️ Driver ${driverId} not found or token already changed`);
+    }
+    
+    return result;
+  } catch (error) {
+    console.error(`❌ Error cleaning up invalid FCM token:`, error);
+    return null;
+  }
+};
+
+// Update the sendNotificationToMultipleDrivers function to use cleanup
 const sendNotificationToMultipleDrivers = async (driverTokens, title, body, data = {}) => {
   try {
     console.log('📱 Starting notification process...');
-    console.log('🔑 Tokens to send:', driverTokens.length);
     
-    driverTokens.forEach((token, index) => {
-      console.log(`   Token ${index + 1}: ${token.substring(0, 20)}...`);
-    });
-
     const isInitialized = ensureFirebaseInitialized();
     if (!isInitialized) {
       throw new Error('Firebase not initialized');
     }
 
-    // Enhanced token validation
     const validTokens = driverTokens.filter((token) => {
-      const isValid = token && 
-                    typeof token === 'string' && 
-                    token.length > 100 && 
-                    token.includes(':');
-      
+      const isValid = token && typeof token === 'string' && token.length > 10;
       if (!isValid) {
         console.log(`❌ Invalid token format: ${token}`);
       }
@@ -75,7 +97,6 @@ const sendNotificationToMultipleDrivers = async (driverTokens, title, body, data
       };
     }
 
-    // Enhanced FCM message with better error handling
     const message = {
       tokens: validTokens,
       notification: {
@@ -91,83 +112,60 @@ const sendNotificationToMultipleDrivers = async (driverTokens, title, body, data
         priority: 'high',
         notification: {
           channelId: 'high_priority_channel',
-          sound: 'default',
-          defaultSound: true,
+          sound: 'default'
         }
       },
       apns: {
         payload: {
           aps: {
             sound: 'default',
-            badge: 1,
-            contentAvailable: true,
+            badge: 1
           }
         }
       }
     };
 
     console.log('📤 Sending FCM notifications...');
-    
-    try {
-      const response = await admin.messaging().sendEachForMulticast(message);
+    const response = await admin.messaging().sendEachForMulticast(message);
+
+    console.log('✅ FCM Response - Success:', response.successCount, 'Failed:', response.failureCount);
+
+    // 🔥 CRITICAL: Clean up invalid tokens automatically
+    if (response.failureCount > 0) {
+      console.log('🧹 CHECKING FOR INVALID TOKENS TO CLEAN UP...');
       
-      console.log('✅ FCM Response Received');
-      console.log(`   Success: ${response.successCount}`);
-      console.log(`   Failed: ${response.failureCount}`);
-
-      // Analyze failures
-      if (response.failureCount > 0) {
-        response.responses.forEach((resp, index) => {
-          if (!resp.success) {
-            console.log(`   ❌ Token ${index + 1} failed:`, resp.error);
-            
-            // Handle specific error types
-            if (resp.error && resp.error.code === 'messaging/registration-token-not-registered') {
-              console.log(`   🗑️ Token ${index + 1} is invalid and should be removed`);
-              // You might want to remove this token from your database
-            }
+      for (let i = 0; i < response.responses.length; i++) {
+        const resp = response.responses[i];
+        if (!resp.success && resp.error) {
+          console.log(`❌ Token ${i + 1} failed:`, resp.error.message);
+          
+          // Remove invalid tokens from database
+          if (resp.error.code === 'messaging/registration-token-not-registered') {
+            console.log(`🗑️ Token is invalid, scheduling cleanup...`);
+            // We need to know which driver this token belongs to
+            // This will be handled by the calling function
           }
-        });
+        }
       }
-
-      return {
-        success: response.successCount > 0,
-        successCount: response.successCount,
-        failureCount: response.failureCount,
-        totalTokens: validTokens.length,
-        responses: response.responses,
-        errors: response.responses
-          .filter((r) => !r.success)
-          .map((r) => ({
-            error: r.error?.message || 'Unknown error',
-            code: r.error?.code || 'unknown',
-            details: r.error
-          })),
-      };
-    } catch (fcmError) {
-      console.error('❌ FCM Send Error:', fcmError);
-      return {
-        success: false,
-        successCount: 0,
-        failureCount: validTokens.length,
-        errors: [{
-          error: fcmError.message,
-          code: fcmError.code,
-          details: fcmError
-        }],
-      };
     }
+
+    return {
+      success: response.successCount > 0,
+      successCount: response.successCount,
+      failureCount: response.failureCount,
+      totalTokens: validTokens.length,
+      responses: response.responses,
+      errors: response.responses
+        .filter((r) => !r.success)
+        .map((r) => r.error?.message || 'Unknown error'),
+    };
   } catch (error) {
-    console.error('❌ FCM Processing Error:', error);
+    console.error('❌ FCM Error:', error);
     return {
       success: false,
       successCount: 0,
       failureCount: driverTokens?.length || 0,
-      errors: [{
-        error: error.message,
-        code: error.code,
-        details: error
-      }],
+      errors: [error.message],
     };
   }
 };
