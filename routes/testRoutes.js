@@ -308,6 +308,134 @@ router.post('/create-test-driver', async (req, res) => {
 });
 
 
+// In testRoutes.js - Add these new routes
+
+// Test FCM token directly
+router.post('/test-fcm-direct', async (req, res) => {
+  try {
+    const { driverId, fcmToken } = req.body;
+    
+    console.log('🧪 DIRECT FCM TEST:', { driverId, tokenLength: fcmToken?.length });
+    
+    if (!driverId || !fcmToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'driverId and fcmToken are required'
+      });
+    }
+
+    const driver = await Driver.findOne({ driverId });
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        message: `Driver ${driverId} not found`
+      });
+    }
+
+    console.log(`📱 Current FCM token in DB: ${driver.fcmToken ? 'EXISTS' : 'NULL'}`);
+    
+    // Test notification with provided token
+    const testData = {
+      type: "test_direct",
+      message: "DIRECT FCM TEST",
+      timestamp: new Date().toISOString(),
+      test: "true"
+    };
+    
+    const result = await sendNotificationToMultipleDrivers(
+      [fcmToken],
+      "🧪 DIRECT FCM TEST",
+      "This is a direct FCM test",
+      testData
+    );
+    
+    res.json({
+      success: true,
+      message: `Direct FCM test completed`,
+      driverId: driverId,
+      currentTokenInDB: driver.fcmToken ? `${driver.fcmToken.substring(0, 15)}...` : 'NULL',
+      testTokenUsed: `${fcmToken.substring(0, 15)}...`,
+      result: result
+    });
+    
+  } catch (error) {
+    console.error('❌ Direct FCM test error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Direct FCM test failed',
+      error: error.message
+    });
+  }
+});
+
+// Get detailed driver FCM info
+router.get('/driver-fcm-details/:driverId', async (req, res) => {
+  try {
+    const { driverId } = req.params;
+    
+    const driver = await Driver.findOne({ driverId });
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        message: 'Driver not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      driverId: driver.driverId,
+      name: driver.name,
+      fcmToken: driver.fcmToken || 'NULL',
+      fcmTokenLength: driver.fcmToken ? driver.fcmToken.length : 0,
+      fcmTokenPreview: driver.fcmToken ? `${driver.fcmToken.substring(0, 10)}...${driver.fcmToken.slice(-10)}` : 'NULL',
+      platform: driver.platform,
+      status: driver.status,
+      lastUpdate: driver.lastUpdate,
+      notificationEnabled: driver.notificationEnabled
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting driver FCM details:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+
+// Add this debug function to your app
+const checkFirebaseConfig = async () => {
+  try {
+    console.log('🔍 Checking Firebase configuration...');
+    
+    // Check if Firebase is available
+    console.log('📱 Firebase available:', !!messaging);
+    
+    // Get current FCM token
+    const token = await messaging().getToken();
+    console.log('🔑 Current FCM Token:', token);
+    console.log('📏 Token Length:', token.length);
+    
+    // Check if authorized
+    const authStatus = await messaging().hasPermission();
+    console.log('🔐 Notification Permission:', authStatus);
+    
+    // Request permission if not granted
+    if (authStatus === messaging.AuthorizationStatus.NOT_DETERMINED) {
+      const newStatus = await messaging().requestPermission();
+      console.log('🔐 New Permission Status:', newStatus);
+    }
+    
+    // Test token with Firebase
+    console.log('🧪 Testing FCM token validity...');
+    
+  } catch (error) {
+    console.error('❌ Firebase config check error:', error);
+  }
+};
+
+
 
 /**
  * @route POST /api/test/send-notification

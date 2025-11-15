@@ -607,19 +607,22 @@ const init = (server) => {
       }
     });
 
-   
-
-    // In socket.js - Replace the existing bookRide handler with this
+  
+    // In socket.js - Replace the bookRide handler with this enhanced version
 socket.on("bookRide", async (data, callback) => {
   let rideId;
   try {
-    console.log('🚨 ===== REAL USER RIDE BOOKING WITH FCM =====');
-    console.log('📦 User App Data:', {
-      userId: data.userId,
-      customerId: data.customerId, 
-      vehicleType: data.vehicleType,
-      _fcmRequired: data._fcmRequired
-    });
+    console.log('\n🚨 ===== 🚖 NEW RIDE BOOKING REQUEST ===== 🚖');
+    console.log('📦 USER APP DATA RECEIVED:');
+    console.log('   👤 User ID:', data.userId);
+    console.log('   📞 Customer ID:', data.customerId);
+    console.log('   🚗 Vehicle Type:', data.vehicleType);
+    console.log('   📍 Pickup:', data.pickup?.address);
+    console.log('   🎯 Drop:', data.drop?.address);
+    console.log('   💰 Estimated Fare:', data.estimatedPrice);
+    console.log('   📏 Distance:', data.distance);
+    console.log('   ⏱️ Travel Time:', data.travelTime);
+    console.log('   🔑 FCM Required:', data._fcmRequired);
 
     const { userId, customerId, userName, userMobile, pickup, drop, vehicleType, estimatedPrice, distance, travelTime, wantReturn } = data;
     
@@ -637,6 +640,13 @@ socket.on("bookRide", async (data, callback) => {
       otp = Math.floor(1000 + Math.random() * 9000).toString();
     }
     
+    console.log('💰 PRICE CALCULATION:');
+    console.log('   📊 Distance (km):', distanceKm);
+    console.log('   🚗 Vehicle Type:', vehicleType);
+    console.log('   💵 Calculated Fare:', backendCalculatedPrice);
+    console.log('   🔢 Generated OTP:', otp);
+    console.log('   🆔 Generated RAID_ID:', rideId);
+
     // Check if this ride is already being processed
     if (processingRides.has(rideId)) {
       console.log(`⏭️ Ride ${rideId} is already being processed, skipping`);
@@ -654,7 +664,7 @@ socket.on("bookRide", async (data, callback) => {
     
     // Validate required fields
     if (!userId || !customerId || !userName || !pickup || !drop) {
-      console.error("❌ Missing required fields");
+      console.log("❌ MISSING REQUIRED FIELDS");
       processingRides.delete(rideId);
       if (callback) {
         callback({
@@ -726,9 +736,10 @@ socket.on("bookRide", async (data, callback) => {
     };
 
     // Create and save the ride
+    console.log('💾 SAVING RIDE TO DATABASE...');
     const newRide = new Ride(rideData);
     const savedRide = await newRide.save();
-    console.log(`💾 Ride saved to MongoDB with ID: ${savedRide._id}`);
+    console.log(`✅ RIDE SAVED TO MONGODB: ${savedRide._id}`);
 
     // Store ride data in memory for socket operations
     rides[rideId] = {
@@ -752,7 +763,8 @@ socket.on("bookRide", async (data, callback) => {
     // Save initial user location to database
     await saveUserLocationToDB(userId, pickup.lat, pickup.lng, rideId);
 
-    console.log('🚨 EMERGENCY: Sending FCM notifications to ALL online drivers');
+    console.log('\n📢 ===== SENDING NOTIFICATIONS TO DRIVERS =====');
+    console.log(`🎯 Target: ALL online drivers with FCM tokens`);
 
     // ✅ CRITICAL FIX: Send FCM notifications to ALL online drivers
     const notificationResult = await sendRideRequestToAllDrivers({
@@ -767,9 +779,15 @@ socket.on("bookRide", async (data, callback) => {
       otp: otp
     }, savedRide);
 
-    console.log('📱 FCM NOTIFICATION RESULT:', notificationResult);
+    console.log('📱 FCM NOTIFICATION RESULT:');
+    console.log('   ✅ Success Count:', notificationResult.successCount || 0);
+    console.log('   ❌ Failure Count:', notificationResult.failureCount || 0);
+    console.log('   📊 Total Drivers:', notificationResult.totalDrivers || 0);
+    console.log('   🔔 FCM Sent:', notificationResult.fcmSent ? 'YES' : 'NO');
+    console.log('   💬 Message:', notificationResult.fcmMessage);
 
     // Also send socket notification as backup
+    console.log('🔔 SENDING SOCKET NOTIFICATION AS BACKUP...');
     io.emit("newRideRequest", {
       rideId: rideId,
       pickup: pickup,
@@ -782,6 +800,19 @@ socket.on("bookRide", async (data, callback) => {
       otp: otp,
       timestamp: new Date().toISOString()
     });
+
+    console.log('\n✅ ===== RIDE BOOKING COMPLETED SUCCESSFULLY =====');
+    console.log(`🆔 RAID_ID: ${rideId}`);
+    console.log(`👤 Customer: ${userName}`);
+    console.log(`📞 Mobile: ${userMobile}`);
+    console.log(`📍 From: ${pickup.address}`);
+    console.log(`🎯 To: ${drop.address}`);
+    console.log(`💰 Fare: ₹${backendCalculatedPrice}`);
+    console.log(`📏 Distance: ${distance}`);
+    console.log(`🚗 Vehicle: ${vehicleType}`);
+    console.log(`🔢 OTP: ${otp}`);
+    console.log(`⏰ Time: ${new Date().toLocaleTimeString()}`);
+    console.log('================================================\n');
 
     if (callback) {
       callback({
@@ -797,12 +828,14 @@ socket.on("bookRide", async (data, callback) => {
     }
 
   } catch (error) {
-    console.error("❌ Error booking ride:", error);
+    console.error("❌ ERROR IN RIDE BOOKING PROCESS:", error);
+    console.error("❌ Stack Trace:", error.stack);
    
     if (callback) {
       callback({
         success: false,
-        message: "Failed to process ride booking"
+        message: "Failed to process ride booking",
+        error: error.message
       });
     }
   } finally {
@@ -812,7 +845,6 @@ socket.on("bookRide", async (data, callback) => {
     }
   }
 });
-
 
 
     // JOIN ROOM

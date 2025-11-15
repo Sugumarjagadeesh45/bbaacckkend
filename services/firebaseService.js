@@ -36,19 +36,35 @@ const ensureFirebaseInitialized = () => {
 
 // Alternative simplified version in firebaseService.js
 
+// In firebaseService.js - Enhanced sendNotificationToMultipleDrivers
 const sendNotificationToMultipleDrivers = async (driverTokens, title, body, data = {}) => {
   try {
     console.log('📱 Starting notification process...');
+    console.log('🔑 Tokens to send:', driverTokens.length);
+    
+    driverTokens.forEach((token, index) => {
+      console.log(`   Token ${index + 1}: ${token.substring(0, 20)}...`);
+    });
 
     const isInitialized = ensureFirebaseInitialized();
     if (!isInitialized) {
       throw new Error('Firebase not initialized');
     }
 
-    // Token validation (same as before)
-    const validTokens = driverTokens.filter(
-      (token) => token && typeof token === 'string' && token.length > 10
-    );
+    // Enhanced token validation
+    const validTokens = driverTokens.filter((token) => {
+      const isValid = token && 
+                    typeof token === 'string' && 
+                    token.length > 100 && 
+                    token.includes(':');
+      
+      if (!isValid) {
+        console.log(`❌ Invalid token format: ${token}`);
+      }
+      return isValid;
+    });
+
+    console.log(`✅ Valid tokens: ${validTokens.length}/${driverTokens.length}`);
 
     if (validTokens.length === 0) {
       return {
@@ -59,7 +75,7 @@ const sendNotificationToMultipleDrivers = async (driverTokens, title, body, data
       };
     }
 
-    // ✅ SIMPLIFIED: Minimal FCM payload
+    // Enhanced FCM message with better error handling
     const message = {
       tokens: validTokens,
       notification: {
@@ -75,40 +91,83 @@ const sendNotificationToMultipleDrivers = async (driverTokens, title, body, data
         priority: 'high',
         notification: {
           channelId: 'high_priority_channel',
-          sound: 'default'
+          sound: 'default',
+          defaultSound: true,
         }
       },
       apns: {
         payload: {
           aps: {
             sound: 'default',
-            badge: 1
+            badge: 1,
+            contentAvailable: true,
           }
         }
       }
     };
 
-    console.log('📤 Sending simplified FCM notifications...');
-    const response = await admin.messaging().sendEachForMulticast(message);
+    console.log('📤 Sending FCM notifications...');
+    
+    try {
+      const response = await admin.messaging().sendEachForMulticast(message);
+      
+      console.log('✅ FCM Response Received');
+      console.log(`   Success: ${response.successCount}`);
+      console.log(`   Failed: ${response.failureCount}`);
 
-    console.log('✅ FCM Response - Success:', response.successCount, 'Failed:', response.failureCount);
+      // Analyze failures
+      if (response.failureCount > 0) {
+        response.responses.forEach((resp, index) => {
+          if (!resp.success) {
+            console.log(`   ❌ Token ${index + 1} failed:`, resp.error);
+            
+            // Handle specific error types
+            if (resp.error && resp.error.code === 'messaging/registration-token-not-registered') {
+              console.log(`   🗑️ Token ${index + 1} is invalid and should be removed`);
+              // You might want to remove this token from your database
+            }
+          }
+        });
+      }
 
-    return {
-      success: response.successCount > 0,
-      successCount: response.successCount,
-      failureCount: response.failureCount,
-      totalTokens: validTokens.length,
-      errors: response.responses
-        .filter((r) => !r.success)
-        .map((r) => r.error?.message || 'Unknown error'),
-    };
+      return {
+        success: response.successCount > 0,
+        successCount: response.successCount,
+        failureCount: response.failureCount,
+        totalTokens: validTokens.length,
+        responses: response.responses,
+        errors: response.responses
+          .filter((r) => !r.success)
+          .map((r) => ({
+            error: r.error?.message || 'Unknown error',
+            code: r.error?.code || 'unknown',
+            details: r.error
+          })),
+      };
+    } catch (fcmError) {
+      console.error('❌ FCM Send Error:', fcmError);
+      return {
+        success: false,
+        successCount: 0,
+        failureCount: validTokens.length,
+        errors: [{
+          error: fcmError.message,
+          code: fcmError.code,
+          details: fcmError
+        }],
+      };
+    }
   } catch (error) {
-    console.error('❌ FCM Error:', error.message);
+    console.error('❌ FCM Processing Error:', error);
     return {
       success: false,
       successCount: 0,
       failureCount: driverTokens?.length || 0,
-      errors: [error.message],
+      errors: [{
+        error: error.message,
+        code: error.code,
+        details: error
+      }],
     };
   }
 };
