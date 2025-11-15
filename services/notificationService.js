@@ -3,156 +3,139 @@ const Driver = require('../models/driver/driver');
 
 console.log('📱 Notification Service loaded');
 
+
+
+
+// In /services/notificationService.js - Update driver query
+
 class NotificationService {
-  /**
-   * Send ride request notification to all available drivers
-   */
-  static async sendRideRequestToAllDrivers(rideData) {
-    try {
-      console.log('🚨 SENDING RIDE REQUEST NOTIFICATIONS TO ALL DRIVERS');
-      console.log('📊 Ride Data:', {
-        rideId: rideData.rideId,
-        pickup: rideData.pickup?.address || 'Selected Location',
-        fare: rideData.fare,
-        vehicleType: rideData.vehicleType
-      });
+  
+  // In /services/notificationService.js - Update driver query
 
-      // First test Firebase connection
-      const firebaseTest = await testFirebaseConnection();
-      if (!firebaseTest.success) {
-        console.error('❌ Firebase connection test failed:', firebaseTest.error);
-        return {
-          success: false,
-          message: `Firebase connection failed: ${firebaseTest.error}`,
-          sentCount: 0,
-          totalDrivers: 0
-        };
-      }
+static async sendRideRequestToAllDrivers(rideData) {
+  try {
+    console.log('🚨 SENDING RIDE REQUEST NOTIFICATIONS TO ALL DRIVERS');
 
-      console.log('✅ Firebase connection test passed');
-
-      // Get ALL active drivers with valid FCM tokens
-      const allDrivers = await Driver.find({ 
-        status: "Live",
-        fcmToken: { $exists: true, $ne: null, $ne: '' }
-      }).select('fcmToken driverId name vehicleType');
-
-      console.log(`📱 Found ${allDrivers.length} drivers with FCM tokens`);
-
-      const driverTokens = allDrivers.map(driver => driver.fcmToken).filter(token => token);
-      
-      if (driverTokens.length === 0) {
-        console.log('⚠️ No drivers with valid FCM tokens found');
-        return {
-          success: false,
-          message: 'No drivers with FCM tokens available',
-          sentCount: 0,
-          totalDrivers: 0
-        };
-      }
-
-      console.log(`🎯 Sending to ${driverTokens.length} drivers`);
-
-      // Prepare notification data
-      const notificationData = {
-        type: 'ride_request',
-        rideId: rideData.rideId || 'unknown',
-        pickup: JSON.stringify(rideData.pickup || {}),
-        drop: JSON.stringify(rideData.drop || {}),
-        fare: rideData.fare?.toString() || '0',
-        distance: rideData.distance || '0 km',
-        vehicleType: rideData.vehicleType || 'taxi',
-        userName: rideData.userName || 'Customer',
-        userMobile: rideData.userMobile || 'N/A',
-        timestamp: new Date().toISOString(),
-        priority: 'high',
-        click_action: 'FLUTTER_NOTIFICATION_CLICK'
-      };
-
-      console.log('🚨 SENDING REAL RIDE NOTIFICATION:');
-      console.log('Payload:', notificationData);
-
-      const result = await sendNotificationToMultipleDrivers(
-        driverTokens,
-        '🚖 New Ride Request!',
-        `Pickup: ${rideData.pickup?.address?.substring(0, 40) || 'Selected Location'}... | Fare: ₹${rideData.fare}`,
-        notificationData
-      );
-
-      console.log(`📊 Notification Send Results:`, result);
-
-      return {
-        success: result.success,
-        sentCount: result.successCount,
-        failedCount: result.failureCount,
-        totalDrivers: driverTokens.length,
-        errors: result.errors,
-        message: result.success ? 
-          `Notifications sent to ${result.successCount} drivers` : 
-          `Failed to send notifications: ${result.errors.join(', ')}`
-      };
-
-    } catch (error) {
-      console.error('❌ Error in sendRideRequestToAllDrivers:', error);
+    // Test Firebase connection
+    const firebaseTest = await testFirebaseConnection();
+    if (!firebaseTest.success) {
+      console.error('❌ Firebase connection test failed:', firebaseTest.error);
       return {
         success: false,
-        message: error.message,
+        message: `Firebase connection failed: ${firebaseTest.error}`,
         sentCount: 0,
         totalDrivers: 0
       };
     }
-  }
 
-  /**
-   * Send notification to specific driver
-   */
-  static async sendToDriver(driverId, title, body, data = {}) {
-    try {
-      const driver = await Driver.findOne({ driverId });
-      if (!driver || !driver.fcmToken) {
-        console.log(`❌ Driver ${driverId} not found or no FCM token`);
-        return { 
-          success: false, 
-          error: 'Driver not found or no FCM token' 
-        };
+    console.log('✅ Firebase connection test passed');
+
+    // ✅ FIXED: Better driver query - check multiple status fields
+    const allDrivers = await Driver.find({
+      $or: [
+        { status: "Live" },
+        { status: "online" }, 
+        { status: "available" },
+        { isOnline: true },
+        { lastUpdate: { $gte: new Date(Date.now() - 10 * 60 * 1000) } } // Active in last 10 minutes
+      ],
+      fcmToken: { 
+        $exists: true, 
+        $ne: null, 
+        $ne: '',
+        $type: 'string'
       }
+    }).select('fcmToken driverId name vehicleType status isOnline lastUpdate');
 
-      console.log(`📱 Sending notification to driver: ${driver.name} (${driverId})`);
+    console.log(`📱 Database query found ${allDrivers.length} drivers with FCM tokens`);
 
-      const result = await sendNotificationToDriver(driver.fcmToken, title, body, data);
+    // ✅ Additional filtering for active drivers
+    const activeDrivers = allDrivers.filter(driver => {
+      // Consider driver active if:
+      // 1. Explicitly online, OR
+      // 2. Status is Live/online/available, OR  
+      // 3. Updated in last 10 minutes
+      const isOnline = driver.isOnline === true;
+      const hasGoodStatus = ["Live", "online", "available"].includes(driver.status);
+      const isRecentlyActive = driver.lastUpdate && 
+        (Date.now() - new Date(driver.lastUpdate).getTime()) < 600000; // 10 minutes
       
-      return { 
-        success: result.success,
-        driverId,
-        driverName: driver.name,
-        error: result.error
-      };
-    } catch (error) {
-      console.error(`❌ Error sending notification to driver ${driverId}:`, error);
-      return { 
-        success: false, 
-        error: error.message 
+      return isOnline || hasGoodStatus || isRecentlyActive;
+    });
+
+    console.log(`🟢 Active drivers after filtering: ${activeDrivers.length}`);
+
+    const driverTokens = activeDrivers.map(driver => driver.fcmToken).filter(token => token);
+    
+    if (driverTokens.length === 0) {
+      console.log('⚠️ No active drivers with valid FCM tokens found');
+      // Log why no drivers were selected for debugging
+      console.log('🔍 Driver status details:');
+      allDrivers.forEach(driver => {
+        console.log(`   - ${driver.name} (${driver.driverId}): status=${driver.status}, isOnline=${driver.isOnline}, lastUpdate=${driver.lastUpdate}`);
+      });
+      return {
+        success: false,
+        message: 'No active drivers with FCM tokens available',
+        sentCount: 0,
+        totalDrivers: 0
       };
     }
-  }
 
-  static async sendTestNotification(driverId) {
-    return await this.sendToDriver(
-      driverId,
-      '🧪 Test Notification',
-      'This is a test notification from the backend server',
-      {
-        type: 'test',
-        timestamp: new Date().toISOString(),
-        test: 'true'
-      }
+    console.log(`🎯 Sending to ${driverTokens.length} active drivers`);
+
+    // Prepare notification data
+    const notificationData = {
+      type: 'ride_request',
+      rideId: rideData.rideId || 'unknown',
+      pickup: JSON.stringify(rideData.pickup || {}),
+      drop: JSON.stringify(rideData.drop || {}),
+      fare: rideData.fare?.toString() || '0',
+      distance: rideData.distance || '0 km',
+      vehicleType: rideData.vehicleType || 'taxi',
+      userName: rideData.userName || 'Customer',
+      userMobile: rideData.userMobile || 'N/A',
+      timestamp: new Date().toISOString(),
+      priority: 'high',
+      click_action: 'FLUTTER_NOTIFICATION_CLICK'
+    };
+
+    console.log('🚨 SENDING RIDE NOTIFICATION TO DRIVERS');
+
+    const result = await sendNotificationToMultipleDrivers(
+      driverTokens,
+      '🚖 New Ride Request!',
+      `Pickup: ${rideData.pickup?.address?.substring(0, 40) || 'Location'}... | Fare: ₹${rideData.fare}`,
+      notificationData
     );
-  }
 
-  static async getFirebaseStatus() {
-    return await testFirebaseConnection();
+    console.log(`📊 FCM Results: ${result.successCount} successful, ${result.failureCount} failed`);
+
+    return {
+      success: result.success,
+      sentCount: result.successCount,
+      failedCount: result.failureCount,
+      totalDrivers: driverTokens.length,
+      errors: result.errors,
+      message: result.success ? 
+        `Notifications sent to ${result.successCount} drivers` : 
+        `Failed to send notifications`
+    };
+
+  } catch (error) {
+    console.error('❌ Error in sendRideRequestToAllDrivers:', error);
+    return {
+      success: false,
+      message: error.message,
+      sentCount: 0,
+      totalDrivers: 0
+    };
   }
 }
+
+
+}
+
 
 module.exports = NotificationService;
 

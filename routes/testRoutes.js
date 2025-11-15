@@ -467,6 +467,61 @@ router.get('/check-service-account', (req, res) => {
   }
 });
 
+
+// Add this to your testRoutes.js or create a new route
+
+router.post('/test-fcm-immediate', async (req, res) => {
+  try {
+    const { driverId } = req.body;
+    
+    console.log('🧪 IMMEDIATE FCM TEST for driver:', driverId);
+    
+    // Get driver with FCM token
+    const driver = await Driver.findOne({ driverId });
+    if (!driver || !driver.fcmToken) {
+      return res.status(404).json({
+        success: false,
+        message: `Driver ${driverId} not found or no FCM token`
+      });
+    }
+    
+    console.log(`📱 Driver FCM token: ${driver.fcmToken.substring(0, 20)}...`);
+    
+    const testData = {
+      type: "test_immediate",
+      message: "IMMEDIATE TEST - Ride Request",
+      timestamp: new Date().toISOString(),
+      test: "true"
+    };
+    
+    const result = await sendNotificationToMultipleDrivers(
+      [driver.fcmToken],
+      "🚖 IMMEDIATE TEST - Ride Request",
+      "This is an immediate test notification with sound",
+      testData
+    );
+    
+    res.json({
+      success: true,
+      message: `Immediate FCM test completed`,
+      driverId: driverId,
+      driverName: driver.name,
+      fcmToken: `${driver.fcmToken.substring(0, 15)}...`,
+      result: result
+    });
+    
+  } catch (error) {
+    console.error('❌ Immediate FCM test error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Immediate FCM test failed',
+      error: error.message
+    });
+  }
+});
+
+
+
 /**
  * @route GET /api/test/firebase-status
  * @description Check Firebase Admin SDK status

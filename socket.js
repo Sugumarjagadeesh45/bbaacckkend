@@ -605,241 +605,250 @@ const init = (server) => {
       }
     });
 
-    // BOOK RIDE
-    socket.on("bookRide", async (data, callback) => {
-      let rideId;
+   
+    // In socket.js - Update the bookRide handler
+
+socket.on("bookRide", async (data, callback) => {
+  let rideId;
+  try {
+    console.log('🚨 ===== REAL USER RIDE BOOKING =====');
+    console.log('📦 User App Data:', {
+      userId: data.userId,
+      customerId: data.customerId, 
+      vehicleType: data.vehicleType,
+      _source: data._source || 'unknown'
+    });
+
+    const { userId, customerId, userName, userMobile, pickup, drop, vehicleType, estimatedPrice, distance, travelTime, wantReturn } = data;
+    console.log('📥 Received bookRide request');
+    
+    // Calculate price on backend using admin prices
+    const distanceKm = parseFloat(distance);
+    console.log(`📏 Backend calculating price for ${distanceKm}km ${vehicleType}`);
+   
+    const backendCalculatedPrice = await ridePriceController.calculateRidePrice(vehicleType, distanceKm);
+   
+    console.log(`💰 Frontend sent price: ₹${estimatedPrice}, Backend calculated: ₹${backendCalculatedPrice}`);
+   
+    // Use the backend calculated price (admin prices)
+    const finalPrice = backendCalculatedPrice;
+   
+    // Generate sequential RAID_ID on backend
+    rideId = await generateSequentialRaidId();
+    console.log(`🆔 Generated RAID_ID: ${rideId}`);
+    console.log(`💰 USING BACKEND CALCULATED PRICE: ₹${finalPrice}`);
+    
+    let otp;
+    if (customerId && customerId.length >= 4) {
+      otp = customerId.slice(-4);
+    } else {
+      otp = Math.floor(1000 + Math.random() * 9000).toString();
+    }
+    
+    // Check if this ride is already being processed
+    if (processingRides.has(rideId)) {
+      console.log(`⏭️ Ride ${rideId} is already being processed, skipping`);
+      if (callback) {
+        callback({
+          success: false,
+          message: "Ride is already being processed"
+        });
+      }
+      return;
+    }
+   
+    // Add to processing set
+    processingRides.add(rideId);
+    
+    // Validate required fields
+    if (!userId || !customerId || !userName || !pickup || !drop) {
+      console.error("❌ Missing required fields");
+      processingRides.delete(rideId);
+      if (callback) {
+        callback({
+          success: false,
+          message: "Missing required fields"
+        });
+      }
+      return;
+    }
+
+    // Check if ride with this ID already exists in database
+    const existingRide = await Ride.findOne({ RAID_ID: rideId });
+    if (existingRide) {
+      console.log(`⏭️ Ride ${rideId} already exists in database, skipping`);
+      processingRides.delete(rideId);
+      if (callback) {
+        callback({
+          success: true,
+          rideId: rideId,
+          _id: existingRide._id.toString(),
+          otp: existingRide.otp,
+          message: "Ride already exists"
+        });
+      }
+      return;
+    }
+
+    // Create a new ride document in MongoDB - USE BACKEND CALCULATED PRICE
+    const rideData = {
+      user: userId,
+      customerId: customerId,
+      name: userName,
+      userMobile: userMobile || "N/A",
+      RAID_ID: rideId,
+      pickupLocation: pickup.address || "Selected Location",
+      dropoffLocation: drop.address || "Selected Location",
+      pickupCoordinates: {
+        latitude: pickup.lat,
+        longitude: pickup.lng
+      },
+      dropoffCoordinates: {
+        latitude: drop.lat,
+        longitude: drop.lng
+      },
+      fare: finalPrice, // USE BACKEND CALCULATED PRICE
+      rideType: vehicleType,
+      otp: otp,
+      distance: distance || "0 km",
+      travelTime: travelTime || "0 mins",
+      isReturnTrip: wantReturn || false,
+      status: "pending",
+      Raid_date: new Date(),
+      Raid_time: new Date().toLocaleTimeString('en-US', {
+        timeZone: 'Asia/Kolkata',
+        hour12: true
+      }),
+      pickup: {
+        addr: pickup.address || "Selected Location",
+        lat: pickup.lat,
+        lng: pickup.lng,
+      },
+      drop: {
+        addr: drop.address || "Selected Location",
+        lat: drop.lat,
+        lng: drop.lng,
+      },
+      price: finalPrice, // USE BACKEND CALCULATED PRICE
+      distanceKm: distanceKm || 0
+    };
+
+    // Create and save the ride
+    const newRide = new Ride(rideData);
+    const savedRide = await newRide.save();
+    console.log(`💾 Ride saved to MongoDB with ID: ${savedRide._id}`);
+    console.log(`💾 BACKEND PRICE SAVED: ₹${savedRide.fare}`);
+
+    // Store ride data in memory for socket operations
+    rides[rideId] = {
+      ...data,
+      rideId: rideId,
+      status: "pending",
+      timestamp: Date.now(),
+      _id: savedRide._id.toString(),
+      userLocation: { latitude: pickup.lat, longitude: pickup.lng },
+      fare: finalPrice
+    };
+
+    // Initialize user location tracking
+    userLocationTracking.set(userId, {
+      latitude: pickup.lat,
+      longitude: pickup.lng,
+      lastUpdate: Date.now(),
+      rideId: rideId
+    });
+
+    // Save initial user location to database
+    await saveUserLocationToDB(userId, pickup.lat, pickup.lng, rideId);
+
+    console.log('🚨 EMERGENCY: Sending real-time notifications');
+
+    // ✅ FIXED: Use the updated notification service
+    const notificationResult = await NotificationService.sendRideRequestToAllDrivers({
+      ...data,
+      rideId: rideId,
+      fare: finalPrice,
+      pickup: pickup,
+      drop: drop,
+      userName: userName,
+      userMobile: userMobile
+    });
+
+    console.log('📱 REAL BOOKING FCM RESULT:', notificationResult);
+
+    // Also send socket notification as backup
+    io.emit("newRideRequest", {
+      ...data,
+      rideId: rideId,
+      _id: savedRide._id.toString(),
+      emergency: true
+    });
+
+    if (callback) {
+      callback({
+        success: true,
+        rideId: rideId,
+        _id: savedRide._id.toString(),
+        otp: otp,
+        message: "Ride booked successfully!",
+        notificationResult: notificationResult
+      });
+    }
+
+  } catch (error) {
+    console.error("❌ Error booking ride:", error);
+   
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      console.error("❌ Validation errors:", errors);
+     
+      if (callback) {
+        callback({
+          success: false,
+          message: `Validation failed: ${errors.join(', ')}`
+        });
+      }
+    } else if (error.code === 11000 && error.keyPattern && error.keyPattern.RAID_ID) {
+      console.log(`🔄 Duplicate RAID_ID detected: ${rideId}`);
+     
       try {
-        console.log('🚨 ===== REAL USER RIDE BOOKING =====');
-        console.log('📦 User App Data:', {
-          userId: data.userId,
-          customerId: data.customerId, 
-          vehicleType: data.vehicleType,
-          _source: data._source || 'unknown'
-        });
-
-        const { userId, customerId, userName, userMobile, pickup, drop, vehicleType, estimatedPrice, distance, travelTime, wantReturn } = data;
-        console.log('📥 Received bookRide request');
-        
-        // Calculate price on backend using admin prices
-        const distanceKm = parseFloat(distance);
-        console.log(`📏 Backend calculating price for ${distanceKm}km ${vehicleType}`);
-       
-        const backendCalculatedPrice = await ridePriceController.calculateRidePrice(vehicleType, distanceKm);
-       
-        console.log(`💰 Frontend sent price: ₹${estimatedPrice}, Backend calculated: ₹${backendCalculatedPrice}`);
-       
-        // Use the backend calculated price (admin prices)
-        const finalPrice = backendCalculatedPrice;
-       
-        // Generate sequential RAID_ID on backend
-        rideId = await generateSequentialRaidId();
-        console.log(`🆔 Generated RAID_ID: ${rideId}`);
-        console.log(`💰 USING BACKEND CALCULATED PRICE: ₹${finalPrice}`);
-        
-        let otp;
-        if (customerId && customerId.length >= 4) {
-          otp = customerId.slice(-4);
-        } else {
-          otp = Math.floor(1000 + Math.random() * 9000).toString();
-        }
-        
-        // Check if this ride is already being processed
-        if (processingRides.has(rideId)) {
-          console.log(`⏭️ Ride ${rideId} is already being processed, skipping`);
-          if (callback) {
-            callback({
-              success: false,
-              message: "Ride is already being processed"
-            });
-          }
-          return;
-        }
-       
-        // Add to processing set
-        processingRides.add(rideId);
-        
-        // Validate required fields
-        if (!userId || !customerId || !userName || !pickup || !drop) {
-          console.error("❌ Missing required fields");
-          processingRides.delete(rideId);
-          if (callback) {
-            callback({
-              success: false,
-              message: "Missing required fields"
-            });
-          }
-          return;
-        }
-
-        // Check if ride with this ID already exists in database
         const existingRide = await Ride.findOne({ RAID_ID: rideId });
-        if (existingRide) {
-          console.log(`⏭️ Ride ${rideId} already exists in database, skipping`);
-          processingRides.delete(rideId);
-          if (callback) {
-            callback({
-              success: true,
-              rideId: rideId,
-              _id: existingRide._id.toString(),
-              otp: existingRide.otp,
-              message: "Ride already exists"
-            });
-          }
-          return;
-        }
-
-        // Create a new ride document in MongoDB - USE BACKEND CALCULATED PRICE
-        const rideData = {
-          user: userId,
-          customerId: customerId,
-          name: userName,
-          userMobile: userMobile || "N/A",
-          RAID_ID: rideId,
-          pickupLocation: pickup.address || "Selected Location",
-          dropoffLocation: drop.address || "Selected Location",
-          pickupCoordinates: {
-            latitude: pickup.lat,
-            longitude: pickup.lng
-          },
-          dropoffCoordinates: {
-            latitude: drop.lat,
-            longitude: drop.lng
-          },
-          fare: finalPrice, // USE BACKEND CALCULATED PRICE
-          rideType: vehicleType,
-          otp: otp,
-          distance: distance || "0 km",
-          travelTime: travelTime || "0 mins",
-          isReturnTrip: wantReturn || false,
-          status: "pending",
-          Raid_date: new Date(),
-          Raid_time: new Date().toLocaleTimeString('en-US', {
-            timeZone: 'Asia/Kolkata',
-            hour12: true
-          }),
-          pickup: {
-            addr: pickup.address || "Selected Location",
-            lat: pickup.lat,
-            lng: pickup.lng,
-          },
-          drop: {
-            addr: drop.address || "Selected Location",
-            lat: drop.lat,
-            lng: drop.lng,
-          },
-          price: finalPrice, // USE BACKEND CALCULATED PRICE
-          distanceKm: distanceKm || 0
-        };
-
-        // Create and save the ride
-        const newRide = new Ride(rideData);
-        const savedRide = await newRide.save();
-        console.log(`💾 Ride saved to MongoDB with ID: ${savedRide._id}`);
-        console.log(`💾 BACKEND PRICE SAVED: ₹${savedRide.fare}`);
-
-        // Store ride data in memory for socket operations
-        rides[rideId] = {
-          ...data,
-          rideId: rideId,
-          status: "pending",
-          timestamp: Date.now(),
-          _id: savedRide._id.toString(),
-          userLocation: { latitude: pickup.lat, longitude: pickup.lng },
-          fare: finalPrice
-        };
-
-        // Initialize user location tracking
-        userLocationTracking.set(userId, {
-          latitude: pickup.lat,
-          longitude: pickup.lng,
-          lastUpdate: Date.now(),
-          rideId: rideId
-        });
-
-        // Save initial user location to database
-        await saveUserLocationToDB(userId, pickup.lat, pickup.lng, rideId);
-
-        console.log('🚨 EMERGENCY: Sending real-time notifications');
-  
-        // Use AI suggested notification function
-        const notificationResult = await sendRideRequestToAllDrivers({
-          ...data,
-          rideId: rideId,
-          fare: finalPrice
-        }, savedRide);
-
-        console.log('📱 REAL BOOKING FCM RESULT:', notificationResult);
-
-        // Also send socket notification as backup
-        io.emit("newRideRequest", {
-          ...data,
-          rideId: rideId,
-          _id: savedRide._id.toString(),
-          emergency: true
-        });
-
-        if (callback) {
+        if (existingRide && callback) {
           callback({
             success: true,
             rideId: rideId,
-            _id: savedRide._id.toString(),
-            otp: otp,
-            message: "Ride booked successfully!",
-            notificationResult: notificationResult
+            _id: existingRide._id.toString(),
+            otp: existingRide.otp,
+            message: "Ride already exists (duplicate handled)"
           });
         }
-
-      } catch (error) {
-        console.error("❌ Error booking ride:", error);
-       
-        if (error.name === 'ValidationError') {
-          const errors = Object.values(error.errors).map(err => err.message);
-          console.error("❌ Validation errors:", errors);
-         
-          if (callback) {
-            callback({
-              success: false,
-              message: `Validation failed: ${errors.join(', ')}`
-            });
-          }
-        } else if (error.code === 11000 && error.keyPattern && error.keyPattern.RAID_ID) {
-          console.log(`🔄 Duplicate RAID_ID detected: ${rideId}`);
-         
-          try {
-            const existingRide = await Ride.findOne({ RAID_ID: rideId });
-            if (existingRide && callback) {
-              callback({
-                success: true,
-                rideId: rideId,
-                _id: existingRide._id.toString(),
-                otp: existingRide.otp,
-                message: "Ride already exists (duplicate handled)"
-              });
-            }
-          } catch (findError) {
-            console.error("❌ Error finding existing ride:", findError);
-            if (callback) {
-              callback({
-                success: false,
-                message: "Failed to process ride booking (duplicate error)"
-              });
-            }
-          }
-        } else {
-          if (callback) {
-            callback({
-              success: false,
-              message: "Failed to process ride booking"
-            });
-          }
-        }
-      } finally {
-        // Always remove from processing set
-        if (rideId) {
-          processingRides.delete(rideId);
+      } catch (findError) {
+        console.error("❌ Error finding existing ride:", findError);
+        if (callback) {
+          callback({
+            success: false,
+            message: "Failed to process ride booking (duplicate error)"
+          });
         }
       }
-    });
+    } else {
+      if (callback) {
+        callback({
+          success: false,
+          message: "Failed to process ride booking"
+        });
+      }
+    }
+  } finally {
+    // Always remove from processing set
+    if (rideId) {
+      processingRides.delete(rideId);
+    }
+  }
+});
+
+
+
 
     // JOIN ROOM
     socket.on('joinRoom', async (data) => {
