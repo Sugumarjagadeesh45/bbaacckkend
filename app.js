@@ -87,35 +87,60 @@ app.post('/api/test/accept-ride', async (req, res) => {
 });
 
 
-
-// In your server routes (backend)
+// In app.js - Update the FCM token endpoint
 app.post('/drivers/update-fcm-token', async (req, res) => {
   try {
     const { driverId, fcmToken, platform } = req.body;
     
     console.log('📱 Updating FCM token for driver:', driverId);
-    
-    // Update driver document with new FCM token
-    const result = await Driver.findByIdAndUpdate(
-      driverId,
+    console.log('🔑 Token received:', fcmToken ? `${fcmToken.substring(0, 20)}...` : 'NULL');
+
+    if (!driverId || !fcmToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'Driver ID and FCM token are required'
+      });
+    }
+
+    // ✅ IMPORT Driver model properly
+    const Driver = require('./models/driver/driver');
+
+    // Update driver in database using driverId field
+    const driver = await Driver.findOneAndUpdate(
+      { driverId: driverId }, // Match by driverId field
       { 
         fcmToken: fcmToken,
-        fcmPlatform: platform,
-        fcmUpdatedAt: new Date()
+        platform: platform || 'android',
+        lastUpdate: new Date(),
+        notificationEnabled: true,
+        status: "Live" // Keep driver online
       },
-      { new: true }
+      { new: true, upsert: false }
     );
-    
-    if (!result) {
-      return res.status(404).json({ success: false, message: 'Driver not found' });
+
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        error: 'Driver not found'
+      });
     }
-    
+
     console.log('✅ FCM token updated for driver:', driverId);
-    res.json({ success: true, message: 'FCM token updated successfully' });
     
+    res.json({
+      success: true,
+      message: 'FCM token updated successfully',
+      driverId: driverId,
+      tokenUpdated: true,
+      tokenPreview: `${fcmToken.substring(0, 15)}...`
+    });
+
   } catch (error) {
     console.error('❌ Error updating FCM token:', error);
-    res.status(500).json({ success: false, message: 'Internal server error' });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 
