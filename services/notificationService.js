@@ -12,32 +12,19 @@ class NotificationService {
   
   // In /services/notificationService.js - Update driver query
 
+  // services/notificationService.js
 static async sendRideRequestToAllDrivers(rideData) {
   try {
     console.log('🚨 SENDING RIDE REQUEST NOTIFICATIONS TO ALL DRIVERS');
 
-    // Test Firebase connection
-    const firebaseTest = await testFirebaseConnection();
-    if (!firebaseTest.success) {
-      console.error('❌ Firebase connection test failed:', firebaseTest.error);
-      return {
-        success: false,
-        message: `Firebase connection failed: ${firebaseTest.error}`,
-        sentCount: 0,
-        totalDrivers: 0
-      };
-    }
-
-    console.log('✅ Firebase connection test passed');
-
-    // ✅ FIXED: Better driver query - check multiple status fields
+    // ஆன்லைனில் இருக்கும் டிரைவர்களை FCM டோக்கனுடன் கேள்
     const allDrivers = await Driver.find({
       $or: [
         { status: "Live" },
         { status: "online" }, 
         { status: "available" },
         { isOnline: true },
-        { lastUpdate: { $gte: new Date(Date.now() - 10 * 60 * 1000) } } // Active in last 10 minutes
+        { lastUpdate: { $gte: new Date(Date.now() - 10 * 60 * 1000) } }
       ],
       fcmToken: { 
         $exists: true, 
@@ -45,51 +32,24 @@ static async sendRideRequestToAllDrivers(rideData) {
         $ne: '',
         $type: 'string'
       }
-    }).select('fcmToken driverId name vehicleType status isOnline lastUpdate');
-
-    console.log(`📱 Database query found ${allDrivers.length} drivers with FCM tokens`);
-
-    // ✅ Additional filtering for active drivers
-    const activeDrivers = allDrivers.filter(driver => {
-      // Consider driver active if:
-      // 1. Explicitly online, OR
-      // 2. Status is Live/online/available, OR  
-      // 3. Updated in last 10 minutes
-      const isOnline = driver.isOnline === true;
-      const hasGoodStatus = ["Live", "online", "available"].includes(driver.status);
-      const isRecentlyActive = driver.lastUpdate && 
-        (Date.now() - new Date(driver.lastUpdate).getTime()) < 600000; // 10 minutes
-      
-      return isOnline || hasGoodStatus || isRecentlyActive;
     });
 
-    console.log(`🟢 Active drivers after filtering: ${activeDrivers.length}`);
+    console.log(`📱 Found ${allDrivers.length} drivers with FCM tokens`);
 
-    const driverTokens = activeDrivers.map(driver => driver.fcmToken).filter(token => token);
+    // செல்ல FCM டோக்கன்களை வடிக்கட்டு
+    const driverTokens = allDrivers.map(driver => driver.fcmToken).filter(token => token);
     
     if (driverTokens.length === 0) {
-      console.log('⚠️ No active drivers with valid FCM tokens found');
-      // Log why no drivers were selected for debugging
-      console.log('🔍 Driver status details:');
-      allDrivers.forEach(driver => {
-        console.log(`   - ${driver.name} (${driver.driverId}): status=${driver.status}, isOnline=${driver.isOnline}, lastUpdate=${driver.lastUpdate}`);
-      });
-      return {
-        success: false,
-        message: 'No active drivers with FCM tokens available',
-        sentCount: 0,
-        totalDrivers: 0
-      };
+      console.log('⚠️ No drivers with FCM tokens found');
+      return { success: false, message: 'No drivers available' };
     }
 
-    console.log(`🎯 Sending to ${driverTokens.length} active drivers`);
-
-    // Prepare notification data
+    // FCM அறிவிப்பு தரவை உருவாக்கு
     const notificationData = {
       type: 'ride_request',
-      rideId: rideData.rideId || 'unknown',
-      pickup: JSON.stringify(rideData.pickup || {}),
-      drop: JSON.stringify(rideData.drop || {}),
+      rideId: rideData.rideId,
+      pickup: JSON.stringify(rideData.pickup),
+      drop: JSON.stringify(rideData.drop),
       fare: rideData.fare?.toString() || '0',
       distance: rideData.distance || '0 km',
       vehicleType: rideData.vehicleType || 'taxi',
@@ -97,39 +57,23 @@ static async sendRideRequestToAllDrivers(rideData) {
       userMobile: rideData.userMobile || 'N/A',
       timestamp: new Date().toISOString(),
       priority: 'high',
-      click_action: 'FLUTTER_NOTIFICATION_CLICK'
+      click_action: 'FLUTTER_NOTIFICATION_CLICK',
+      sound: 'default' // 🔊 ஒலிக்கு முக்கியமாக
     };
 
-    console.log('🚨 SENDING RIDE NOTIFICATION TO DRIVERS');
-
+    // FCM அனுப்பு
     const result = await sendNotificationToMultipleDrivers(
       driverTokens,
       '🚖 New Ride Request!',
-      `Pickup: ${rideData.pickup?.address?.substring(0, 40) || 'Location'}... | Fare: ₹${rideData.fare}`,
+      `Pickup: ${rideData.pickup?.address?.substring(0, 40)}... | Fare: ₹${rideData.fare}`,
       notificationData
     );
 
-    console.log(`📊 FCM Results: ${result.successCount} successful, ${result.failureCount} failed`);
-
-    return {
-      success: result.success,
-      sentCount: result.successCount,
-      failedCount: result.failureCount,
-      totalDrivers: driverTokens.length,
-      errors: result.errors,
-      message: result.success ? 
-        `Notifications sent to ${result.successCount} drivers` : 
-        `Failed to send notifications`
-    };
-
+    console.log(`📊 FCM Results: ${result.successCount} success, ${result.failureCount} failed`);
+    return result;
   } catch (error) {
     console.error('❌ Error in sendRideRequestToAllDrivers:', error);
-    return {
-      success: false,
-      message: error.message,
-      sentCount: 0,
-      totalDrivers: 0
-    };
+    return { success: false, message: error.message };
   }
 }
 

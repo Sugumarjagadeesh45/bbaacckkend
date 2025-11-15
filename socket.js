@@ -34,7 +34,8 @@ const sendRideRequestToAllDrivers = async (rideData, savedRide) => {
         success: false,
         message: 'No drivers with FCM tokens available',
         sentCount: 0,
-        totalDrivers: 0
+        totalDrivers: 0,
+        fcmSent: false
       };
     }
 
@@ -64,6 +65,7 @@ const sendRideRequestToAllDrivers = async (rideData, savedRide) => {
         vehicleType: rideData.vehicleType || "taxi",
         userName: rideData.userName || "Customer",
         userMobile: rideData.userMobile || "N/A",
+        otp: rideData.otp || "0000",
         timestamp: new Date().toISOString(),
         priority: "high",
         click_action: "FLUTTER_NOTIFICATION_CLICK",
@@ -606,37 +608,27 @@ const init = (server) => {
     });
 
    
-    // In socket.js - Update the bookRide handler
 
+    // In socket.js - Replace the existing bookRide handler with this
 socket.on("bookRide", async (data, callback) => {
   let rideId;
   try {
-    console.log('🚨 ===== REAL USER RIDE BOOKING =====');
+    console.log('🚨 ===== REAL USER RIDE BOOKING WITH FCM =====');
     console.log('📦 User App Data:', {
       userId: data.userId,
       customerId: data.customerId, 
       vehicleType: data.vehicleType,
-      _source: data._source || 'unknown'
+      _fcmRequired: data._fcmRequired
     });
 
     const { userId, customerId, userName, userMobile, pickup, drop, vehicleType, estimatedPrice, distance, travelTime, wantReturn } = data;
-    console.log('📥 Received bookRide request');
     
     // Calculate price on backend using admin prices
     const distanceKm = parseFloat(distance);
-    console.log(`📏 Backend calculating price for ${distanceKm}km ${vehicleType}`);
-   
     const backendCalculatedPrice = await ridePriceController.calculateRidePrice(vehicleType, distanceKm);
-   
-    console.log(`💰 Frontend sent price: ₹${estimatedPrice}, Backend calculated: ₹${backendCalculatedPrice}`);
-   
-    // Use the backend calculated price (admin prices)
-    const finalPrice = backendCalculatedPrice;
    
     // Generate sequential RAID_ID on backend
     rideId = await generateSequentialRaidId();
-    console.log(`🆔 Generated RAID_ID: ${rideId}`);
-    console.log(`💰 USING BACKEND CALCULATED PRICE: ₹${finalPrice}`);
     
     let otp;
     if (customerId && customerId.length >= 4) {
@@ -690,7 +682,7 @@ socket.on("bookRide", async (data, callback) => {
       return;
     }
 
-    // Create a new ride document in MongoDB - USE BACKEND CALCULATED PRICE
+    // Create a new ride document in MongoDB
     const rideData = {
       user: userId,
       customerId: customerId,
@@ -707,7 +699,7 @@ socket.on("bookRide", async (data, callback) => {
         latitude: drop.lat,
         longitude: drop.lng
       },
-      fare: finalPrice, // USE BACKEND CALCULATED PRICE
+      fare: backendCalculatedPrice,
       rideType: vehicleType,
       otp: otp,
       distance: distance || "0 km",
@@ -729,7 +721,7 @@ socket.on("bookRide", async (data, callback) => {
         lat: drop.lat,
         lng: drop.lng,
       },
-      price: finalPrice, // USE BACKEND CALCULATED PRICE
+      price: backendCalculatedPrice,
       distanceKm: distanceKm || 0
     };
 
@@ -737,7 +729,6 @@ socket.on("bookRide", async (data, callback) => {
     const newRide = new Ride(rideData);
     const savedRide = await newRide.save();
     console.log(`💾 Ride saved to MongoDB with ID: ${savedRide._id}`);
-    console.log(`💾 BACKEND PRICE SAVED: ₹${savedRide.fare}`);
 
     // Store ride data in memory for socket operations
     rides[rideId] = {
@@ -747,7 +738,7 @@ socket.on("bookRide", async (data, callback) => {
       timestamp: Date.now(),
       _id: savedRide._id.toString(),
       userLocation: { latitude: pickup.lat, longitude: pickup.lng },
-      fare: finalPrice
+      fare: backendCalculatedPrice
     };
 
     // Initialize user location tracking
@@ -761,27 +752,35 @@ socket.on("bookRide", async (data, callback) => {
     // Save initial user location to database
     await saveUserLocationToDB(userId, pickup.lat, pickup.lng, rideId);
 
-    console.log('🚨 EMERGENCY: Sending real-time notifications');
+    console.log('🚨 EMERGENCY: Sending FCM notifications to ALL online drivers');
 
-    // ✅ FIXED: Use the updated notification service
-    const notificationResult = await NotificationService.sendRideRequestToAllDrivers({
-      ...data,
+    // ✅ CRITICAL FIX: Send FCM notifications to ALL online drivers
+    const notificationResult = await sendRideRequestToAllDrivers({
       rideId: rideId,
-      fare: finalPrice,
       pickup: pickup,
       drop: drop,
+      fare: backendCalculatedPrice,
+      distance: distance,
+      vehicleType: vehicleType,
       userName: userName,
-      userMobile: userMobile
-    });
+      userMobile: userMobile,
+      otp: otp
+    }, savedRide);
 
-    console.log('📱 REAL BOOKING FCM RESULT:', notificationResult);
+    console.log('📱 FCM NOTIFICATION RESULT:', notificationResult);
 
     // Also send socket notification as backup
     io.emit("newRideRequest", {
-      ...data,
       rideId: rideId,
-      _id: savedRide._id.toString(),
-      emergency: true
+      pickup: pickup,
+      drop: drop,
+      fare: backendCalculatedPrice,
+      distance: distance,
+      vehicleType: vehicleType,
+      userName: userName,
+      userMobile: userMobile,
+      otp: otp,
+      timestamp: new Date().toISOString()
     });
 
     if (callback) {
@@ -791,53 +790,20 @@ socket.on("bookRide", async (data, callback) => {
         _id: savedRide._id.toString(),
         otp: otp,
         message: "Ride booked successfully!",
-        notificationResult: notificationResult
+        notificationResult: notificationResult,
+        fcmSent: notificationResult.fcmSent,
+        driversNotified: notificationResult.driversNotified || 0
       });
     }
 
   } catch (error) {
     console.error("❌ Error booking ride:", error);
    
-    if (error.name === 'ValidationError') {
-      const errors = Object.values(error.errors).map(err => err.message);
-      console.error("❌ Validation errors:", errors);
-     
-      if (callback) {
-        callback({
-          success: false,
-          message: `Validation failed: ${errors.join(', ')}`
-        });
-      }
-    } else if (error.code === 11000 && error.keyPattern && error.keyPattern.RAID_ID) {
-      console.log(`🔄 Duplicate RAID_ID detected: ${rideId}`);
-     
-      try {
-        const existingRide = await Ride.findOne({ RAID_ID: rideId });
-        if (existingRide && callback) {
-          callback({
-            success: true,
-            rideId: rideId,
-            _id: existingRide._id.toString(),
-            otp: existingRide.otp,
-            message: "Ride already exists (duplicate handled)"
-          });
-        }
-      } catch (findError) {
-        console.error("❌ Error finding existing ride:", findError);
-        if (callback) {
-          callback({
-            success: false,
-            message: "Failed to process ride booking (duplicate error)"
-          });
-        }
-      }
-    } else {
-      if (callback) {
-        callback({
-          success: false,
-          message: "Failed to process ride booking"
-        });
-      }
+    if (callback) {
+      callback({
+        success: false,
+        message: "Failed to process ride booking"
+      });
     }
   } finally {
     // Always remove from processing set
@@ -846,7 +812,6 @@ socket.on("bookRide", async (data, callback) => {
     }
   }
 });
-
 
 
 
