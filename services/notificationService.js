@@ -10,14 +10,25 @@ console.log('📱 Notification Service loaded');
 
 class NotificationService {
   
-  // In /services/notificationService.js - Update driver query
-
-  // services/notificationService.js
-static async sendRideRequestToAllDrivers(rideData) {
+ 
+  // In services/notificationService.js - Enhanced version
+static async sendRideRequestToAllDrivers(rideData, savedRide) {
   try {
-    console.log('🚨 SENDING RIDE REQUEST NOTIFICATIONS TO ALL DRIVERS');
+    console.log('\n🔔 ===== FCM NOTIFICATION PROCESS START =====');
+    console.log('🚖 Ride Details for Notification:');
+    console.log('   🆔 Ride ID:', rideData.rideId);
+    console.log('   👤 Customer:', rideData.userName);
+    console.log('   📞 Mobile:', rideData.userMobile);
+    console.log('   📍 Pickup:', rideData.pickup?.address);
+    console.log('   🎯 Drop:', rideData.drop?.address);
+    console.log('   💰 Fare:', rideData.fare);
+    console.log('   📏 Distance:', rideData.distance);
+    console.log('   🚗 Vehicle:', rideData.vehicleType);
+    console.log('   🔢 OTP:', rideData.otp);
 
-    // ஆன்லைனில் இருக்கும் டிரைவர்களை FCM டோக்கனுடன் கேள்
+    console.log('\n🔍 FINDING ONLINE DRIVERS WITH FCM TOKENS...');
+
+    // Get ALL active drivers with FCM tokens
     const allDrivers = await Driver.find({
       $or: [
         { status: "Live" },
@@ -34,48 +45,132 @@ static async sendRideRequestToAllDrivers(rideData) {
       }
     });
 
-    console.log(`📱 Found ${allDrivers.length} drivers with FCM tokens`);
+    console.log(`📊 DATABASE QUERY RESULTS:`);
+    console.log(`   ✅ Total drivers found: ${allDrivers.length}`);
+    console.log(`   📱 Drivers with FCM tokens: ${allDrivers.filter(d => d.fcmToken).length}`);
 
-    // செல்ல FCM டோக்கன்களை வடிக்கட்டு
-    const driverTokens = allDrivers.map(driver => driver.fcmToken).filter(token => token);
-    
-    if (driverTokens.length === 0) {
-      console.log('⚠️ No drivers with FCM tokens found');
-      return { success: false, message: 'No drivers available' };
+    if (allDrivers.length === 0) {
+      console.log('❌ NO DRIVERS WITH FCM TOKENS FOUND');
+      return {
+        success: false,
+        message: 'No drivers with FCM tokens available',
+        sentCount: 0,
+        totalDrivers: 0,
+        fcmSent: false
+      };
     }
 
-    // FCM அறிவிப்பு தரவை உருவாக்கு
-    const notificationData = {
-      type: 'ride_request',
+    // Log each driver found
+    console.log('\n👥 DRIVERS FOUND FOR NOTIFICATION:');
+    allDrivers.forEach((driver, index) => {
+      console.log(`   ${index + 1}. ${driver.name} (${driver.driverId})`);
+      console.log(`      📱 Token: ${driver.fcmToken ? driver.fcmToken.substring(0, 20) + '...' : 'NO TOKEN'}`);
+      console.log(`      🚗 Vehicle: ${driver.vehicleType}`);
+      console.log(`      📍 Status: ${driver.status}`);
+      console.log(`      ⏰ Last Update: ${driver.lastUpdate ? new Date(driver.lastUpdate).toLocaleTimeString() : 'Never'}`);
+    });
+
+    // Always send socket notification as primary method
+    console.log('\n🔔 SENDING SOCKET NOTIFICATION TO ALL DRIVERS...');
+    io.emit("newRideRequest", {
+      ...rideData,
       rideId: rideData.rideId,
-      pickup: JSON.stringify(rideData.pickup),
-      drop: JSON.stringify(rideData.drop),
-      fare: rideData.fare?.toString() || '0',
-      distance: rideData.distance || '0 km',
-      vehicleType: rideData.vehicleType || 'taxi',
-      userName: rideData.userName || 'Customer',
-      userMobile: rideData.userMobile || 'N/A',
-      timestamp: new Date().toISOString(),
-      priority: 'high',
-      click_action: 'FLUTTER_NOTIFICATION_CLICK',
-      sound: 'default' // 🔊 ஒலிக்கு முக்கியமாக
-    };
+      _id: savedRide?._id?.toString() || null,
+      timestamp: new Date().toISOString()
+    });
+    console.log('✅ SOCKET NOTIFICATION SENT TO ALL CONNECTED DRIVERS');
 
-    // FCM அனுப்பு
-    const result = await sendNotificationToMultipleDrivers(
-      driverTokens,
-      '🚖 New Ride Request!',
-      `Pickup: ${rideData.pickup?.address?.substring(0, 40)}... | Fare: ₹${rideData.fare}`,
-      notificationData
-    );
+    // FCM notification to drivers with tokens
+    const driversWithFCM = allDrivers.filter(driver => driver.fcmToken);
+    
+    console.log(`\n🎯 FCM NOTIFICATION TARGETS:`);
+    console.log(`   📱 Drivers with valid FCM tokens: ${driversWithFCM.length}`);
+    
+    if (driversWithFCM.length > 0) {
+      console.log(`🚀 SENDING FCM TO ${driversWithFCM.length} DRIVERS...`);
+      
+      // Prepare FCM notification data
+      const notificationData = {
+        type: "ride_request",
+        rideId: rideData.rideId,
+        pickup: JSON.stringify(rideData.pickup || {}),
+        drop: JSON.stringify(rideData.drop || {}),
+        fare: rideData.fare?.toString() || "0",
+        distance: rideData.distance?.toString() || "0",
+        vehicleType: rideData.vehicleType || "taxi",
+        userName: rideData.userName || "Customer",
+        userMobile: rideData.userMobile || "N/A",
+        otp: rideData.otp || "0000",
+        timestamp: new Date().toISOString(),
+        priority: "high",
+        click_action: "FLUTTER_NOTIFICATION_CLICK",
+        sound: "default"
+      };
 
-    console.log(`📊 FCM Results: ${result.successCount} success, ${result.failureCount} failed`);
-    return result;
+      console.log('\n📦 FCM NOTIFICATION PAYLOAD:');
+      console.log('   📢 Title: "🚖 New Ride Request!"');
+      console.log(`   📝 Body: "Pickup: ${rideData.pickup?.address?.substring(0, 40)}... | Fare: ₹${rideData.fare}"`);
+      console.log('   🔧 Data:', JSON.stringify(notificationData, null, 2));
+
+      const driverTokens = driversWithFCM.map(d => d.fcmToken);
+      
+      console.log(`\n📤 SENDING FCM NOTIFICATIONS...`);
+      console.log(`   🔑 Tokens being sent: ${driverTokens.length}`);
+      
+      const fcmResult = await sendNotificationToMultipleDrivers(
+        driverTokens,
+        "🚖 New Ride Request!",
+        `Pickup: ${rideData.pickup?.address?.substring(0, 40)}... | Fare: ₹${rideData.fare}`,
+        notificationData
+      );
+
+      console.log('\n📊 FCM NOTIFICATION RESULTS:');
+      console.log(`   ✅ Successful: ${fcmResult.successCount}`);
+      console.log(`   ❌ Failed: ${fcmResult.failureCount}`);
+      console.log(`   📊 Total: ${fcmResult.totalTokens}`);
+      
+      if (fcmResult.errors && fcmResult.errors.length > 0) {
+        console.log('   🔍 Errors:');
+        fcmResult.errors.forEach((error, index) => {
+          console.log(`      ${index + 1}. ${error}`);
+        });
+      }
+
+      return {
+        success: fcmResult.successCount > 0,
+        driversNotified: fcmResult.successCount,
+        totalDrivers: driversWithFCM.length,
+        fcmSent: fcmResult.successCount > 0,
+        successCount: fcmResult.successCount,
+        failureCount: fcmResult.failureCount,
+        fcmMessage: fcmResult.successCount > 0 ? 
+          `FCM sent to ${fcmResult.successCount} drivers` : 
+          `FCM failed: ${fcmResult.errors?.join(', ') || 'Unknown error'}`
+      };
+    } else {
+      console.log('❌ NO DRIVERS WITH VALID FCM TOKENS');
+      return {
+        success: false,
+        driversNotified: 0,
+        totalDrivers: 0,
+        fcmSent: false,
+        fcmMessage: "No drivers with valid FCM tokens available"
+      };
+    }
+
   } catch (error) {
-    console.error('❌ Error in sendRideRequestToAllDrivers:', error);
-    return { success: false, message: error.message };
+    console.error('❌ ERROR IN FCM NOTIFICATION SYSTEM:', error);
+    console.error('❌ Stack Trace:', error.stack);
+    return {
+      success: false,
+      error: error.message,
+      fcmSent: false,
+      fcmMessage: `FCM error: ${error.message}`
+    };
   }
 }
+
+
 
 
 }
