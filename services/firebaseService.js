@@ -72,31 +72,51 @@ const sendNotificationToMultipleDrivers = async (driverTokens, title, body, data
 
     console.log(`📤 Sending notifications to ${validTokens.length} tokens`);
 
+
     const message = {
-      tokens: validTokens,
-      notification: { title, body },
-      data: {
-        ...data,
-        click_action: 'FLUTTER_NOTIFICATION_CLICK',
-        sound: 'default',
+  tokens: validTokens,
+  notification: { 
+    title, 
+    body,
+    sound: 'default'  // ✅ ADD THIS FOR SOUND
+  },
+  data: {
+    ...data,
+    click_action: 'FLUTTER_NOTIFICATION_CLICK',
+    sound: 'default',
+  },
+  android: {
+    priority: 'high',
+    notification: {
+      sound: 'default',
+      priority: 'max',
+      vibrateTimingsMillis: [1000, 500, 1000],
+      defaultLightSettings: true,
+      notificationCount: 1,
+      channelId: 'high_priority_channel',  // ✅ ADD THIS
+      visibility: 'public'
+    },
+  },
+  apns: {
+    payload: {
+      aps: { 
+        sound: 'default', 
+        badge: 1, 
+        'content-available': 1,
+        alert: {
+          title: title,
+          body: body
+        }
       },
-      android: {
-        priority: 'high',
-        notification: {
-          sound: 'default',
-          priority: 'max',
-          vibrateTimingsMillis: [1000, 500, 1000],
-          defaultLightSettings: true,
-          notificationCount: 1,
-        },
-      },
-      apns: {
-        payload: {
-          aps: { sound: 'default', badge: 1, 'content-available': 1 },
-        },
-      },
-      webpush: { headers: { Urgency: 'high' } },
-    };
+    },
+  },
+  webpush: { 
+    headers: { Urgency: 'high' },
+    notification: {
+      sound: 'default'
+    }
+  },
+};
 
     const response = await admin.messaging().sendEachForMulticast(message);
 
